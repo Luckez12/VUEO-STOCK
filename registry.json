@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": null,
+  "providers": [
+    {
+      "id": "example",
+      "name": "Example Provider",
+      "version": "0.1.0",
+      "manifest": "providers/example/manifest.json",
+      "entry": "providers/example/provider.js",
+      "enabled": false
+    }
+  ]
+}
