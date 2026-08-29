@@ -1,1 +1,240 @@
+name: Setup VUEO-STOCK
 
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: vueo-stock-setup-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  setup:
+    name: Create repository structure
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create VUEO-STOCK files
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          node <<'NODE'
+          const fs = require('node:fs');
+          const path = require('node:path');
+
+          const files = {
+            '.gitignore': `node_modules/
+          *.log
+          .DS_Store
+          `,
+
+            'README.md': `# VUEO-STOCK
+
+          Official registry for VUEO native JavaScript providers.
+
+          Providers in this repository target the VUEO QuickJS runtime and must follow the VUEO provider contract. This repository does not contain the VUEO Android application.
+
+          ## Structure
+
+          - \`registry.json\`: provider catalogue consumed by VUEO Content Manager
+          - \`providers/<id>/manifest.json\`: provider metadata
+          - \`providers/<id>/provider.js\`: QuickJS-compatible provider entry point
+          - \`schemas/\`: JSON schemas
+          - \`scripts/validate.mjs\`: dependency-free repository validator
+
+          ## Validate
+
+          \`\`\`bash
+          npm run validate
+          \`\`\`
+
+          Only add providers for sources you are authorised to access. Do not bypass authentication, DRM, CAPTCHA, access controls or other technical protections.
+          `,
+
+            'package.json': JSON.stringify({
+              name: 'vueo-stock',
+              version: '0.1.0',
+              private: true,
+              type: 'module',
+              scripts: { validate: 'node scripts/validate.mjs' },
+              engines: { node: '>=20' }
+            }, null, 2) + '\n',
+
+            'registry.json': JSON.stringify({
+              schemaVersion: 1,
+              updatedAt: null,
+              providers: [{
+                id: 'example',
+                name: 'Example Provider',
+                version: '0.1.0',
+                manifest: 'providers/example/manifest.json',
+                entry: 'providers/example/provider.js',
+                enabled: false
+              }]
+            }, null, 2) + '\n',
+
+            'providers/example/manifest.json': JSON.stringify({
+              schemaVersion: 1,
+              id: 'example',
+              name: 'Example Provider',
+              version: '0.1.0',
+              description: 'Safe disabled template for VUEO provider development.',
+              language: 'en',
+              types: ['movie', 'series'],
+              entry: 'provider.js',
+              enabled: false
+            }, null, 2) + '\n',
+
+            'providers/example/provider.js': `const provider = {
+            id: "example",
+            name: "Example Provider",
+            version: "0.1.0",
+
+            async search(query) {
+              return [];
+            },
+
+            async getDetails(url) {
+              return null;
+            },
+
+            async getEpisodes(url) {
+              return [];
+            },
+
+            async getSources(episodeUrl) {
+              return [];
+            }
+          };
+
+          export default provider;
+          `,
+
+            'schemas/manifest.schema.json': JSON.stringify({
+              '$schema': 'https://json-schema.org/draft/2020-12/schema',
+              title: 'VUEO Provider Manifest',
+              type: 'object',
+              additionalProperties: true,
+              required: ['schemaVersion', 'id', 'name', 'version', 'entry'],
+              properties: {
+                schemaVersion: { type: 'integer', minimum: 1 },
+                id: { type: 'string', pattern: '^[a-z0-9][a-z0-9-]*$' },
+                name: { type: 'string', minLength: 1 },
+                version: { type: 'string', pattern: '^\\d+\\.\\d+\\.\\d+$' },
+                entry: { type: 'string', minLength: 1 },
+                enabled: { type: 'boolean' }
+              }
+            }, null, 2) + '\n',
+
+            'schemas/registry.schema.json': JSON.stringify({
+              '$schema': 'https://json-schema.org/draft/2020-12/schema',
+              title: 'VUEO Provider Registry',
+              type: 'object',
+              additionalProperties: false,
+              required: ['schemaVersion', 'providers'],
+              properties: {
+                schemaVersion: { type: 'integer', minimum: 1 },
+                updatedAt: { type: ['string', 'null'] },
+                providers: { type: 'array' }
+              }
+            }, null, 2) + '\n',
+
+            'scripts/validate.mjs': `import fs from 'node:fs';
+          import path from 'node:path';
+
+          const root = process.cwd();
+          const readJson = relativePath => {
+            const fullPath = path.join(root, relativePath);
+            if (!fs.existsSync(fullPath)) throw new Error(\`Missing file: \${relativePath}\`);
+            return JSON.parse(fs.readFileSync(fullPath, 'utf8'));
+          };
+
+          const registry = readJson('registry.json');
+          if (registry.schemaVersion !== 1) throw new Error('registry.json schemaVersion must be 1');
+          if (!Array.isArray(registry.providers)) throw new Error('registry.json providers must be an array');
+
+          const ids = new Set();
+          for (const item of registry.providers) {
+            if (!item.id || !/^[a-z0-9][a-z0-9-]*$/.test(item.id)) {
+              throw new Error(\`Invalid provider id: \${item.id}\`);
+            }
+            if (ids.has(item.id)) throw new Error(\`Duplicate provider id: \${item.id}\`);
+            ids.add(item.id);
+
+            const manifest = readJson(item.manifest);
+            if (manifest.id !== item.id) throw new Error(\`Manifest id mismatch for \${item.id}\`);
+            if (manifest.version !== item.version) throw new Error(\`Version mismatch for \${item.id}\`);
+
+            const entryPath = path.join(root, item.entry);
+            if (!fs.existsSync(entryPath)) throw new Error(\`Missing provider entry: \${item.entry}\`);
+            const source = fs.readFileSync(entryPath, 'utf8');
+            if (!source.includes('export default')) throw new Error(\`Provider \${item.id} must export default\`);
+          }
+
+          console.log(\`Validated \${registry.providers.length} provider(s).\`);
+          `,
+
+            '.github/workflows/validate.yml': `name: Validate VUEO-STOCK
+
+          on:
+            push:
+              branches: [main]
+            pull_request:
+            workflow_dispatch:
+
+          permissions:
+            contents: read
+
+          jobs:
+            validate:
+              runs-on: ubuntu-latest
+              timeout-minutes: 10
+              steps:
+                - uses: actions/checkout@v4
+                - uses: actions/setup-node@v4
+                  with:
+                    node-version: 20
+                    cache: npm
+                - run: npm install --package-lock-only --ignore-scripts
+                - run: npm run validate
+          `
+          };
+
+          for (const [relativePath, content] of Object.entries(files)) {
+            const target = path.join(process.cwd(), relativePath);
+            fs.mkdirSync(path.dirname(target), { recursive: true });
+            if (!fs.existsSync(target)) fs.writeFileSync(target, content);
+          }
+          NODE
+
+      - name: Generate lock file and validate
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --package-lock-only --ignore-scripts
+          npm run validate
+
+      - name: Commit generated files
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if git diff --quiet && [ -z "$(git status --porcelain)" ]; then
+            echo "VUEO-STOCK is already set up."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add --all
+          git commit -m "chore: initialise VUEO-STOCK"
+          git push
