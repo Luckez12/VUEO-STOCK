@@ -1,5 +1,33 @@
 {
   "name": "VUEO Stock",
-  "version": "1.0.0",
-  "scrapers": []
+  "version": "1.0.1",
+  "scrapers": [
+    {
+      "id": "kisskh",
+      "name": "KissKH",
+      "description": "Experimental Asian drama, series and movie direct streams",
+      "version": "0.1.0",
+      "author": "Luckez",
+      "supportedTypes": [
+        "movie",
+        "tv"
+      ],
+      "filename": "providers/kisskh.js",
+      "enabled": true,
+      "limited": true,
+      "formats": [
+        "m3u8",
+        "mp4"
+      ],
+      "logo": "https://www.google.com/s2/favicons?domain=kisskh.id&sz=128",
+      "contentLanguage": [
+        "en",
+        "ko",
+        "zh",
+        "th",
+        "ja"
+      ],
+      "notes": "Initial direct-stream release. Third-party embeds and encrypted subtitles are not yet enabled."
+    }
+  ]
 }
