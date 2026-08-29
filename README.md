@@ -1,21 +1,23 @@
 # VUEO-STOCK
 
-Official registry for VUEO native JavaScript providers.
+Official JavaScript provider repository for VUEO.
 
-Providers in this repository target the VUEO QuickJS runtime and must follow the VUEO provider contract. This repository does not contain the VUEO Android application.
+## Install URL
 
-## Structure
+`https://raw.githubusercontent.com/Luckez12/VUEO-STOCK/refs/heads/main/manifest.json`
 
-- `registry.json`: provider catalogue consumed by VUEO Content Manager
-- `providers/<id>/manifest.json`: provider metadata
-- `providers/<id>/provider.js`: QuickJS-compatible provider entry point
-- `schemas/`: JSON schemas
-- `scripts/validate.mjs`: dependency-free repository validator
+## Provider contract
 
-## Validate
+Distribution files use the Nuvio-compatible CommonJS contract already supported by VUEO:
 
-```bash
-npm run validate
+```javascript
+async function getStreams(tmdbId, mediaType, season, episode) {
+  return [];
+}
+
+module.exports = { getStreams };
 ```
 
-Only add providers for sources you are authorised to access. Do not bypass authentication, DRM, CAPTCHA, access controls or other technical protections.
+Each stream may include `name`, `title`, `url`, `quality` and optional playback `headers`.
+
+Run `npm run validate` before publishing changes.
