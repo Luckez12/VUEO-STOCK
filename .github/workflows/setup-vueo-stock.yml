@@ -10,13 +10,13 @@ permissions:
   contents: write
 
 concurrency:
-  group: vueo-stock-setup-${{ github.ref }}
+  group: vueo-stock-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  setup:
+  migrate:
     if: github.event_name == 'workflow_dispatch'
-    name: Create repository structure
+    name: Migrate to VUEO provider format
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -26,174 +26,163 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Create VUEO-STOCK files
+      - name: Create Nuvio-compatible VUEO structure
         shell: bash
         run: |
           set -euo pipefail
+
+          rm -f registry.json
+          rm -rf schemas
+          rm -rf providers/example
 
           node <<'NODE'
           const fs = require('node:fs');
           const path = require('node:path');
 
-          const files = {
-            '.gitignore': `node_modules/
-          *.log
-          .DS_Store
-          `,
-
-            'README.md': `# VUEO-STOCK
-
-          Official registry for VUEO native JavaScript providers.
-
-          Providers in this repository target the VUEO QuickJS runtime and must follow the VUEO provider contract. This repository does not contain the VUEO Android application.
-
-          ## Structure
-
-          - \`registry.json\`: provider catalogue consumed by VUEO Content Manager
-          - \`providers/<id>/manifest.json\`: provider metadata
-          - \`providers/<id>/provider.js\`: QuickJS-compatible provider entry point
-          - \`schemas/\`: JSON schemas
-          - \`scripts/validate.mjs\`: dependency-free repository validator
-
-          ## Validate
-
-          \`\`\`bash
-          npm run validate
-          \`\`\`
-
-          Only add providers for sources you are authorised to access. Do not bypass authentication, DRM, CAPTCHA, access controls or other technical protections.
-          `,
-
-            'package.json': JSON.stringify({
-              name: 'vueo-stock',
-              version: '0.1.0',
-              private: true,
-              type: 'module',
-              scripts: { validate: 'node scripts/validate.mjs' },
-              engines: { node: '>=20' }
-            }, null, 2) + '\n',
-
-            'registry.json': JSON.stringify({
-              schemaVersion: 1,
-              updatedAt: null,
-              providers: [{
-                id: 'example',
-                name: 'Example Provider',
-                version: '0.1.0',
-                manifest: 'providers/example/manifest.json',
-                entry: 'providers/example/provider.js',
-                enabled: false
-              }]
-            }, null, 2) + '\n',
-
-            'providers/example/manifest.json': JSON.stringify({
-              schemaVersion: 1,
-              id: 'example',
-              name: 'Example Provider',
-              version: '0.1.0',
-              description: 'Safe disabled template for VUEO provider development.',
-              language: 'en',
-              types: ['movie', 'series'],
-              entry: 'provider.js',
-              enabled: false
-            }, null, 2) + '\n',
-
-            'providers/example/provider.js': `const provider = {
-            id: "example",
-            name: "Example Provider",
-            version: "0.1.0",
-
-            async search(query) {
-              return [];
-            },
-
-            async getDetails(url) {
-              return null;
-            },
-
-            async getEpisodes(url) {
-              return [];
-            },
-
-            async getSources(episodeUrl) {
-              return [];
-            }
-          };
-
-          export default provider;
-          `,
-
-            'schemas/manifest.schema.json': JSON.stringify({
-              '$schema': 'https://json-schema.org/draft/2020-12/schema',
-              title: 'VUEO Provider Manifest',
-              type: 'object',
-              additionalProperties: true,
-              required: ['schemaVersion', 'id', 'name', 'version', 'entry'],
-              properties: {
-                schemaVersion: { type: 'integer', minimum: 1 },
-                id: { type: 'string', pattern: '^[a-z0-9][a-z0-9-]*$' },
-                name: { type: 'string', minLength: 1 },
-                version: { type: 'string', pattern: '^\\d+\\.\\d+\\.\\d+$' },
-                entry: { type: 'string', minLength: 1 },
-                enabled: { type: 'boolean' }
-              }
-            }, null, 2) + '\n',
-
-            'schemas/registry.schema.json': JSON.stringify({
-              '$schema': 'https://json-schema.org/draft/2020-12/schema',
-              title: 'VUEO Provider Registry',
-              type: 'object',
-              additionalProperties: false,
-              required: ['schemaVersion', 'providers'],
-              properties: {
-                schemaVersion: { type: 'integer', minimum: 1 },
-                updatedAt: { type: ['string', 'null'] },
-                providers: { type: 'array' }
-              }
-            }, null, 2) + '\n',
-
-            'scripts/validate.mjs': `import fs from 'node:fs';
-          import path from 'node:path';
-
-          const root = process.cwd();
-          const readJson = relativePath => {
-            const fullPath = path.join(root, relativePath);
-            if (!fs.existsSync(fullPath)) throw new Error(\`Missing file: \${relativePath}\`);
-            return JSON.parse(fs.readFileSync(fullPath, 'utf8'));
-          };
-
-          const registry = readJson('registry.json');
-          if (registry.schemaVersion !== 1) throw new Error('registry.json schemaVersion must be 1');
-          if (!Array.isArray(registry.providers)) throw new Error('registry.json providers must be an array');
-
-          const ids = new Set();
-          for (const item of registry.providers) {
-            if (!item.id || !/^[a-z0-9][a-z0-9-]*$/.test(item.id)) {
-              throw new Error(\`Invalid provider id: \${item.id}\`);
-            }
-            if (ids.has(item.id)) throw new Error(\`Duplicate provider id: \${item.id}\`);
-            ids.add(item.id);
-
-            const manifest = readJson(item.manifest);
-            if (manifest.id !== item.id) throw new Error(\`Manifest id mismatch for \${item.id}\`);
-            if (manifest.version !== item.version) throw new Error(\`Version mismatch for \${item.id}\`);
-
-            const entryPath = path.join(root, item.entry);
-            if (!fs.existsSync(entryPath)) throw new Error(\`Missing provider entry: \${item.entry}\`);
-            const source = fs.readFileSync(entryPath, 'utf8');
-            if (!source.includes('export default')) throw new Error(\`Provider \${item.id} must export default\`);
-          }
-
-          console.log(\`Validated \${registry.providers.length} provider(s).\`);
-          `,
-
-          };
-
-          for (const [relativePath, content] of Object.entries(files)) {
+          const write = (relativePath, content) => {
             const target = path.join(process.cwd(), relativePath);
             fs.mkdirSync(path.dirname(target), { recursive: true });
-            if (!fs.existsSync(target)) fs.writeFileSync(target, content);
+            fs.writeFileSync(target, content);
+          };
+
+          write('manifest.json', JSON.stringify({
+            name: 'VUEO Stock',
+            version: '1.0.0',
+            scrapers: []
+          }, null, 2) + '\n');
+
+          write('package.json', JSON.stringify({
+            name: 'vueo-stock',
+            version: '1.0.0',
+            private: true,
+            type: 'module',
+            scripts: { validate: 'node scripts/validate.mjs' },
+            engines: { node: '>=20' }
+          }, null, 2) + '\n');
+
+          write('.gitignore', `node_modules/
+          *.log
+          .DS_Store
+          `);
+
+          write('README.md', `# VUEO-STOCK
+
+          Official JavaScript provider repository for VUEO.
+
+          ## Install URL
+
+          \`https://raw.githubusercontent.com/Luckez12/VUEO-STOCK/refs/heads/main/manifest.json\`
+
+          ## Provider contract
+
+          Distribution files use the Nuvio-compatible CommonJS contract already supported by VUEO:
+
+          \`\`\`javascript
+          async function getStreams(tmdbId, mediaType, season, episode) {
+            return [];
           }
+
+          module.exports = { getStreams };
+          \`\`\`
+
+          Each stream may include \`name\`, \`title\`, \`url\`, \`quality\` and optional playback \`headers\`.
+
+          Run \`npm run validate\` before publishing changes.
+          `);
+
+          write('providers/_template.js', `"use strict";
+
+          async function getStreams(tmdbId, mediaType, season, episode) {
+            return [];
+          }
+
+          module.exports = { getStreams };
+          `);
+
+          write('scripts/validate.mjs', `import fs from 'node:fs';
+          import path from 'node:path';
+          import vm from 'node:vm';
+
+          const root = process.cwd();
+          const fail = message => {
+            console.error(\`Validation failed: \${message}\`);
+            process.exit(1);
+          };
+
+          const readJson = relativePath => {
+            const fullPath = path.join(root, relativePath);
+            if (!fs.existsSync(fullPath)) fail(\`Missing \${relativePath}\`);
+            try {
+              return JSON.parse(fs.readFileSync(fullPath, 'utf8'));
+            } catch (error) {
+              fail(\`Invalid JSON in \${relativePath}: \${error.message}\`);
+            }
+          };
+
+          const manifest = readJson('manifest.json');
+          if (typeof manifest.name !== 'string' || !manifest.name.trim()) fail('manifest.name is required');
+          if (!/^\\d+\\.\\d+\\.\\d+$/.test(manifest.version || '')) fail('manifest.version must use semantic versioning');
+          if (!Array.isArray(manifest.scrapers)) fail('manifest.scrapers must be an array');
+
+          const ids = new Set();
+          const requiredFields = [
+            'id', 'name', 'description', 'version', 'author',
+            'supportedTypes', 'filename', 'enabled'
+          ];
+
+          for (const scraper of manifest.scrapers) {
+            for (const field of requiredFields) {
+              if (scraper[field] === undefined || scraper[field] === null) fail(\`Provider is missing \${field}\`);
+            }
+
+            if (!/^[a-z0-9][a-z0-9-]*$/.test(scraper.id)) fail(\`Invalid provider id: \${scraper.id}\`);
+            if (ids.has(scraper.id)) fail(\`Duplicate provider id: \${scraper.id}\`);
+            ids.add(scraper.id);
+
+            if (!/^\\d+\\.\\d+\\.\\d+$/.test(scraper.version)) fail(\`Invalid version for \${scraper.id}\`);
+            if (!Array.isArray(scraper.supportedTypes) || scraper.supportedTypes.length === 0) {
+              fail(\`supportedTypes is required for \${scraper.id}\`);
+            }
+
+            const allowedTypes = new Set(['movie', 'tv']);
+            for (const type of scraper.supportedTypes) {
+              if (!allowedTypes.has(type)) fail(\`Unsupported media type \${type} in \${scraper.id}\`);
+            }
+
+            if (!scraper.filename.startsWith('providers/') || !scraper.filename.endsWith('.js')) {
+              fail(\`Invalid filename for \${scraper.id}\`);
+            }
+
+            const providerPath = path.join(root, scraper.filename);
+            if (!fs.existsSync(providerPath)) fail(\`Missing \${scraper.filename}\`);
+
+            const source = fs.readFileSync(providerPath, 'utf8');
+            const moduleObject = { exports: {} };
+            const sandbox = {
+              module: moduleObject,
+              exports: moduleObject.exports,
+              require: () => ({}),
+              console,
+              Promise,
+              URL,
+              URLSearchParams,
+              setTimeout,
+              clearTimeout
+            };
+
+            try {
+              vm.runInNewContext(source, sandbox, { filename: scraper.filename, timeout: 2000 });
+            } catch (error) {
+              fail(\`Cannot load \${scraper.filename}: \${error.message}\`);
+            }
+
+            if (typeof moduleObject.exports.getStreams !== 'function') {
+              fail(\`\${scraper.filename} must export getStreams\`);
+            }
+          }
+
+          console.log(\`Validated VUEO-STOCK with \${manifest.scrapers.length} provider(s).\`);
+          `);
           NODE
 
       - name: Generate lock file and validate
@@ -203,25 +192,25 @@ jobs:
           npm install --package-lock-only --ignore-scripts
           npm run validate
 
-      - name: Commit generated files
+      - name: Commit migration
         shell: bash
         run: |
           set -euo pipefail
 
           if git diff --quiet && [ -z "$(git status --porcelain)" ]; then
-            echo "VUEO-STOCK is already set up."
+            echo "VUEO-STOCK already uses the current format."
             exit 0
           fi
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add --all
-          git commit -m "chore: initialise VUEO-STOCK"
+          git commit -m "refactor: adopt VUEO provider manifest format"
           git push
 
   validate:
     if: github.event_name != 'workflow_dispatch'
-    name: Validate repository
+    name: Validate VUEO-STOCK
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -235,7 +224,7 @@ jobs:
           node-version: 20
           cache: npm
 
-      - name: Validate VUEO-STOCK
+      - name: Validate repository
         shell: bash
         run: |
           set -euo pipefail
