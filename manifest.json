@@ -1,12 +1,12 @@
 {
   "name": "VUEO Stock",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "scrapers": [
     {
       "id": "kisskh",
       "name": "KissKH",
-      "description": "Experimental Asian drama, series and movie direct streams",
-      "version": "0.1.0",
+      "description": "Asian drama, series and movie streams with subtitle metadata",
+      "version": "1.0.0",
       "author": "Luckez",
       "supportedTypes": [
         "movie",
@@ -14,7 +14,7 @@
       ],
       "filename": "providers/kisskh.js",
       "enabled": true,
-      "limited": true,
+      "limited": false,
       "formats": [
         "m3u8",
         "mp4"
@@ -27,7 +27,9 @@
         "th",
         "ja"
       ],
-      "notes": "Initial direct-stream release. Third-party embeds and encrypted subtitles are not yet enabled."
+      "disabledPlatforms": [],
+      "supportsExternalPlayer": true,
+      "notes": "Supports movies, TV episodes, direct MP4 or HLS streams, playback headers and available KissKH subtitle tracks."
     }
   ]
 }
