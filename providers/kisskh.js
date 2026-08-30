@@ -5,6 +5,7 @@ var BASE_URL = "https://kisskh.id";
 var KISSKH_VERSION = "2.8.10";
 var TMDB_API_KEY = "1c29a5198ee1854bd5eb45dbe8d17d92";
 var VIDEO_KEY_API = "https://script.google.com/macros/s/AKfycbzn8B31PuDxzaMa9_CQ0VGEDasFqfzI5bXvjaIZH4DM8DNq9q6xj1ALvZNz_JT3jF0suA/exec?id=";
+var SUBTITLE_KEY_API = "https://script.google.com/macros/s/AKfycbyq6hTj0ZhlinYC6xbggtgo166tp6XaDKBCGtnYk8uOfYBUFwwxBui0sGXiu_zIFmA/exec?id=";
 
 var USER_AGENT = "Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0 Mobile Safari/537.36";
 var DEFAULT_HEADERS = {
@@ -66,6 +67,49 @@ function isDirectStream(url) {
   return value.indexOf(".m3u8") !== -1 || value.indexOf(".mp4") !== -1;
 }
 
+function fixUrl(url) {
+  var value = String(url || "").trim();
+  if (!value) return "";
+  if (value.indexOf("//") === 0) return "https:" + value;
+  if (value.charAt(0) === "/") return BASE_URL + value;
+  return value;
+}
+
+function normalizeSubtitleLanguage(label, code) {
+  var rawCode = String(code || "").trim().toLowerCase().replace("_", "-");
+  var rawLabel = String(label || "").trim();
+  var value = rawLabel.toLowerCase();
+  var aliases = {
+    en: "English", eng: "English", english: "English",
+    ms: "Malay", msa: "Malay", may: "Malay", malay: "Malay", malaysia: "Malay",
+    id: "Indonesian", ind: "Indonesian", indonesia: "Indonesian", indonesian: "Indonesian",
+    ko: "Korean", kor: "Korean", korean: "Korean",
+    zh: "Chinese", zho: "Chinese", chi: "Chinese", chinese: "Chinese",
+    ja: "Japanese", jpn: "Japanese", japanese: "Japanese",
+    th: "Thai", tha: "Thai", thai: "Thai",
+    ar: "Arabic", ara: "Arabic", arabic: "Arabic",
+    km: "Khmer", khm: "Khmer", khmer: "Khmer",
+    vi: "Vietnamese", vie: "Vietnamese", vietnamese: "Vietnamese",
+    es: "Spanish", spa: "Spanish", spanish: "Spanish",
+    fr: "French", fra: "French", fre: "French", french: "French"
+  };
+
+  var baseCode = rawCode.split("-")[0];
+  return aliases[rawCode] || aliases[baseCode] || aliases[value] || rawLabel || rawCode || "Unknown";
+}
+
+function subtitleCode(label, code) {
+  var rawCode = String(code || "").trim().toLowerCase().replace("_", "-");
+  if (rawCode) return rawCode;
+  var value = String(label || "").trim().toLowerCase();
+  var codes = {
+    english: "en", malay: "ms", malaysia: "ms", indonesian: "id", indonesia: "id",
+    korean: "ko", chinese: "zh", japanese: "ja", thai: "th", arabic: "ar",
+    khmer: "km", vietnamese: "vi", spanish: "es", french: "fr"
+  };
+  return codes[value] || value || "und";
+}
+
 function getTmdbInfo(tmdbId, mediaType) {
   var endpoint = mediaType === "movie" ? "movie" : "tv";
   var url = "https://api.themoviedb.org/3/" + endpoint + "/" + encodeURIComponent(tmdbId) +
@@ -92,10 +136,17 @@ function getDramaDetail(id) {
   return fetchJson(url, {});
 }
 
-function findBestDrama(info) {
+function findBestDrama(info, mediaType, season) {
+  var requestedSeason = mediaType === "tv" ? Number(season || 1) : 0;
   var queries = [info.title];
   if (info.originalTitle && normalizeTitle(info.originalTitle) !== normalizeTitle(info.title)) {
     queries.push(info.originalTitle);
+  }
+  if (requestedSeason > 1) {
+    queries.push(info.title + " Season " + requestedSeason);
+    if (info.originalTitle && normalizeTitle(info.originalTitle) !== normalizeTitle(info.title)) {
+      queries.push(info.originalTitle + " Season " + requestedSeason);
+    }
   }
 
   return Promise.all(queries.map(searchKissKh)).then(function(groups) {
@@ -128,6 +179,13 @@ function findBestDrama(info) {
           );
           var detailYear = String(detail.releaseDate || "").split("-")[0];
           if (info.year && detailYear === info.year) score += 25;
+          if (requestedSeason > 0) {
+            var normalized = normalizeTitle(detail.title);
+            var seasonMatch = normalized.match(/(?:season|series|s)\s*(\d+)\b/);
+            var candidateSeason = seasonMatch ? Number(seasonMatch[1]) : 1;
+            if (candidateSeason === requestedSeason) score += 35;
+            else score -= 45;
+          }
           return { detail: detail, score: score };
         })
         .catch(function() {
@@ -178,7 +236,51 @@ function getSources(episodeId, key) {
   });
 }
 
-function buildStreams(source, info, season, episode) {
+function getSubtitleKey(episodeId) {
+  var url = SUBTITLE_KEY_API + encodeURIComponent(episodeId) + "&version=" + encodeURIComponent(KISSKH_VERSION);
+  return fetchJson(url, {}).then(function(data) {
+    if (!data || !data.key) throw new Error("Empty KissKH subtitle key");
+    return data.key;
+  });
+}
+
+function getSubtitles(episodeId) {
+  return getSubtitleKey(episodeId)
+    .then(function(key) {
+      var url = BASE_URL + "/api/Sub/" + encodeURIComponent(episodeId) + "?kkey=" + encodeURIComponent(key);
+      return fetchJson(url, {
+        "Origin": BASE_URL,
+        "Referer": BASE_URL + "/"
+      });
+    })
+    .then(function(items) {
+      var seen = new Set();
+      return (Array.isArray(items) ? items : []).map(function(item) {
+        var url = fixUrl(item && item.src);
+        if (!url || seen.has(url)) return null;
+        seen.add(url);
+        var language = normalizeSubtitleLanguage(item.label, item.land || item.lang);
+        var code = subtitleCode(item.label, item.land || item.lang);
+        return {
+          label: language,
+          language: language,
+          lang: code,
+          url: url,
+          default: Boolean(item.default),
+          headers: {
+            "User-Agent": USER_AGENT,
+            "Referer": BASE_URL + "/"
+          }
+        };
+      }).filter(Boolean);
+    })
+    .catch(function(error) {
+      console.log("[KissKH] Subtitles unavailable: " + error.message);
+      return [];
+    });
+}
+
+function buildStreams(source, subtitles, info, season, episode) {
   var urls = [source && source.Video, source && source.ThirdParty]
     .map(function(value) { return String(value || "").trim(); })
     .filter(function(value, index, array) {
@@ -195,6 +297,7 @@ function buildStreams(source, info, season, episode) {
       title: (info.title || PROVIDER_NAME) + episodeLabel,
       url: url,
       quality: quality,
+      subtitles: subtitles,
       headers: {
         "User-Agent": USER_AGENT,
         "Referer": BASE_URL + "/",
@@ -214,18 +317,21 @@ function getStreams(tmdbId, mediaType, season, episode) {
     .then(function(value) {
       info = value;
       if (!info.title) throw new Error("TMDB title is empty");
-      return findBestDrama(info);
+      return findBestDrama(info, type, season);
     })
     .then(function(detail) {
       var selected = selectEpisode(detail, type, season, episode);
       if (!selected || selected.id === undefined) throw new Error("KissKH episode ID is missing");
-      return getVideoKey(selected.id).then(function(key) {
-        return getSources(selected.id, key);
-      });
+      return Promise.all([
+        getVideoKey(selected.id).then(function(key) { return getSources(selected.id, key); }),
+        getSubtitles(selected.id)
+      ]);
     })
-    .then(function(source) {
-      var streams = buildStreams(source, info, type === "tv" ? season || 1 : null, type === "tv" ? episode || 1 : null);
-      console.log("[KissKH] Direct streams found=" + streams.length);
+    .then(function(result) {
+      var source = result[0];
+      var subtitles = result[1];
+      var streams = buildStreams(source, subtitles, info, type === "tv" ? season || 1 : null, type === "tv" ? episode || 1 : null);
+      console.log("[KissKH] Direct streams found=" + streams.length + " subtitles=" + subtitles.length);
       return streams;
     })
     .catch(function(error) {
