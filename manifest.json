@@ -1,6 +1,6 @@
 {
   "name": "VUEO Stock",
-  "version": "1.3.2",
+  "version": "1.4.0",
   "scrapers": [
     {
       "id": "kisskh",
@@ -357,6 +357,33 @@
       ],
       "filename": "providers/vidsrc.js",
       "enabled": true
+    },
+    {
+      "id": "pencurimovie",
+      "name": "PencuriMovie",
+      "description": "Malaysia and Indonesia movie and TV streams with multi-server playback",
+      "version": "1.0.0",
+      "author": "Luckez",
+      "supportedTypes": [
+        "movie",
+        "tv"
+      ],
+      "filename": "providers/pencurimovie.js",
+      "enabled": true,
+      "limited": false,
+      "formats": [
+        "m3u8",
+        "mp4"
+      ],
+      "logo": "https://www.google.com/s2/favicons?domain=pencurimovie.sbs&sz=128",
+      "contentLanguage": [
+        "ms",
+        "id",
+        "en"
+      ],
+      "disabledPlatforms": [],
+      "supportsExternalPlayer": true,
+      "notes": "Uses PencuriMovie dynamic domain discovery, TMDB title matching, TV season and episode selection, iframe resolution and direct HLS/MP4 extraction."
     }
   ]
 }
