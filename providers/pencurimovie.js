@@ -61,7 +61,12 @@ function requestText(url, headers, timeoutMs) {
     });
   });
 
-  return withSoftTimeout(request, timeoutMs || 2600, "PencuriMovie request");
+  var requestLabel = "PencuriMovie request";
+  try {
+    var parsedLabel = new URL(url);
+    requestLabel += " " + parsedLabel.hostname + parsedLabel.pathname;
+  } catch (_) {}
+  return withSoftTimeout(request, timeoutMs || 2200, requestLabel);
 }
 
 function requestJson(url, headers, timeoutMs) {
@@ -102,7 +107,7 @@ function getBaseUrl() {
   if (cachedBaseUrl) return Promise.resolve(cachedBaseUrl);
   if (cachedBaseUrlPromise) return cachedBaseUrlPromise;
 
-  cachedBaseUrlPromise = requestJson(DOMAIN_CONFIG_URL, {}, 1600)
+  cachedBaseUrlPromise = requestJson(DOMAIN_CONFIG_URL, {}, 650)
     .then(function(data) {
       var values = data && data.pencurimovie;
       var first = Array.isArray(values) ? values[0] : values;
@@ -202,7 +207,7 @@ function getTmdbInfo(tmdbId, mediaType) {
     "https://api.themoviedb.org/3/" + endpoint + "/" + encodeURIComponent(tmdbId) +
     "?api_key=" + TMDB_API_KEY;
 
-  return requestJson(url, { "Accept": "application/json" }, 1800).then(function(data) {
+  return requestJson(url, { "Accept": "application/json" }, 1400).then(function(data) {
     return {
       tmdbId: String(tmdbId),
       title: String(data && (data.title || data.name) || ""),
@@ -283,7 +288,7 @@ function scoreCandidate(item, info, mediaType) {
 
 function searchSite(baseUrl, query) {
   var url = trimSlash(baseUrl) + "/?s=" + encodeURIComponent(query);
-  return requestText(url, { "Referer": trimSlash(baseUrl) + "/" }, 2400)
+  return requestText(url, { "Referer": trimSlash(baseUrl) + "/" }, 1800)
     .then(function(result) {
       updateBaseFromUrl(result.url);
       return parseSearchResults(result.text, result.url);
@@ -299,10 +304,7 @@ function findBestTitle(baseUrl, info, mediaType) {
     var best = items[0];
     var bestScore = best ? scoreCandidate(best, info, mediaType) : 0;
 
-    if (
-      best &&
-      bestScore >= 48
-    ) {
+    if (best) {
       return best;
     }
 
@@ -506,6 +508,34 @@ function extractSubtitles(text, baseUrl) {
   return output;
 }
 
+
+function extractMovieplayIframes(text, baseUrl) {
+  var source = unescapeScriptText(text);
+  var output = [];
+  var seen = {};
+
+  var blockRegex =
+    /<div\b[^>]*class\s*=\s*(["'])[^"']*\bmovieplay\b[^"']*\1[^>]*>([\s\S]*?)<\/div>/gi;
+  var block;
+
+  while ((block = blockRegex.exec(source))) {
+    var iframeRegex = /<iframe\b[^>]*>/gi;
+    var frame;
+    while ((frame = iframeRegex.exec(block[0]))) {
+      var raw =
+        getAttr(frame[0], "data-src") ||
+        getAttr(frame[0], "data-lazy-src") ||
+        getAttr(frame[0], "src");
+      var url = safeUrl(raw, baseUrl);
+      if (!url || seen[url]) continue;
+      seen[url] = true;
+      output.push(url);
+    }
+  }
+
+  return output;
+}
+
 function extractIframes(text, baseUrl) {
   var source = unescapeScriptText(text);
   var output = [];
@@ -597,7 +627,7 @@ function resolveEmbed(url, referer, depth) {
   return requestText(
     absolute,
     referer ? { "Referer": referer } : {},
-    depth === 0 ? 2400 : 1900
+    depth === 0 ? 1800 : 1300
   ).then(function(result) {
     var resolved = { streams: [], subtitles: [] };
     var finalUrl = result.url || absolute;
@@ -650,7 +680,7 @@ function resolveEmbed(url, referer, depth) {
 }
 
 function resolvePlaybackPage(pageUrl) {
-  return requestText(pageUrl, {}, 2500).then(function(result) {
+  return requestText(pageUrl, {}, 1800).then(function(result) {
     updateBaseFromUrl(result.url);
 
     var resolved = {
@@ -666,19 +696,16 @@ function resolvePlaybackPage(pageUrl) {
 
     if (resolved.streams.length) return resolved;
 
-    var iframes = extractIframes(result.text, result.url).slice(0, 5);
+    var iframes = extractMovieplayIframes(result.text, result.url);
+    if (!iframes.length) {
+      iframes = extractIframes(result.text, result.url);
+    }
     if (!iframes.length) {
       throw new Error("PencuriMovie playback iframe not found");
     }
 
-    return Promise.all(
-      iframes.map(function(frame) {
-        return resolveEmbed(frame, result.url, 0);
-      })
-    ).then(function(children) {
-      children.forEach(function(child) {
-        mergeResolved(resolved, child);
-      });
+    return resolveEmbed(iframes[0], result.url, 0).then(function(child) {
+      mergeResolved(resolved, child);
       return resolved;
     });
   });
@@ -747,7 +774,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
       return requestText(
         match.href,
         { "Referer": trimSlash(cachedBaseUrl || baseUrl) + "/" },
-        2400
+        1800
       ).then(function(detail) {
         updateBaseFromUrl(detail.url);
 
@@ -774,7 +801,8 @@ function getStreams(tmdbId, mediaType, season, episode) {
     .then(function(target) {
       if (target.detailHtml && type === "movie") {
         var immediate = extractDirectMedia(target.detailHtml, target.targetUrl);
-        var frames = extractIframes(target.detailHtml, target.targetUrl);
+        var frames = extractMovieplayIframes(target.detailHtml, target.targetUrl);
+        if (!frames.length) frames = extractIframes(target.detailHtml, target.targetUrl);
 
         if (immediate.length) {
           return {
@@ -790,18 +818,12 @@ function getStreams(tmdbId, mediaType, season, episode) {
         }
 
         if (frames.length) {
-          return Promise.all(
-            frames.slice(0, 5).map(function(frame) {
-              return resolveEmbed(frame, target.targetUrl, 0);
-            })
-          ).then(function(children) {
+          return resolveEmbed(frames[0], target.targetUrl, 0).then(function(child) {
             var resolved = {
               streams: [],
               subtitles: extractSubtitles(target.detailHtml, target.targetUrl)
             };
-            children.forEach(function(child) {
-              mergeResolved(resolved, child);
-            });
+            mergeResolved(resolved, child);
             return resolved;
           });
         }
@@ -822,7 +844,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
       return streams;
     });
 
-  return withSoftTimeout(work, 8800, "PencuriMovie provider")
+  return withSoftTimeout(work, 7600, "PencuriMovie provider")
     .catch(function(error) {
       console.error(
         "[PencuriMovie] " +
