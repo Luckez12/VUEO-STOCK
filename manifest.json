@@ -1,12 +1,12 @@
 {
   "name": "VUEO Stock",
-  "version": "1.3.1",
+  "version": "1.3.2",
   "scrapers": [
     {
       "id": "kisskh",
       "name": "KissKH",
       "description": "Asian drama, series and movie streams with subtitle metadata",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "author": "Luckez",
       "supportedTypes": [
         "movie",
@@ -35,7 +35,7 @@
       "id": "onetouchtv",
       "name": "OneTouchTV",
       "description": "Asian drama, anime, series and movie streams with subtitle metadata",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "author": "Luckez",
       "supportedTypes": [
         "movie",
