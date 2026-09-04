@@ -240,8 +240,21 @@ function decryptString(encrypted) {
   plain.length -= padding;
 
   var envelope = JSON.parse(utf8Decode(plain));
-  if (!envelope || typeof envelope.result !== "string") throw new Error("OneTouchTV encrypted envelope has no result");
-  return envelope.result;
+  if (envelope === null || envelope === undefined) {
+    throw new Error("OneTouchTV decrypted payload is empty");
+  }
+
+  // Older OneTouchTV responses wrap the real JSON as a string in `result`.
+  // Newer responses may expose `result` directly as an object/array, or may
+  // already be the final JSON payload. Support all three shapes.
+  if (typeof envelope === "object" && !Array.isArray(envelope) &&
+      Object.prototype.hasOwnProperty.call(envelope, "result")) {
+    if (typeof envelope.result === "string") return envelope.result;
+    if (envelope.result === null || envelope.result === undefined) return "null";
+    return JSON.stringify(envelope.result);
+  }
+
+  return JSON.stringify(envelope);
 }
 
 function fetchText(url, headers) {
