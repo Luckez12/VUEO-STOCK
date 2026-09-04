@@ -290,9 +290,44 @@ function normalizeTitle(value) {
   return String(value || "")
     .toLowerCase()
     .replace(/&/g, " and ")
-    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/[^a-z0-9\u00c0-\uffff]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function firstValue(item, keys) {
+  if (!item || typeof item !== "object") return null;
+  for (var i = 0; i < keys.length; i++) {
+    var value = item[keys[i]];
+    if (value !== undefined && value !== null && String(value).trim() !== "") return value;
+  }
+  return null;
+}
+
+function itemId(item) {
+  return firstValue(item, ["id", "vodId", "vod_id", "contentId", "content_id", "movieId", "movie_id"]);
+}
+
+function itemTitle(item) {
+  return String(firstValue(item, [
+    "title", "name", "vodName", "vod_name", "displayName", "display_name",
+    "movieName", "movie_name", "dramaName", "drama_name", "originalTitle", "original_title"
+  ]) || "");
+}
+
+function itemYear(item) {
+  var raw = String(firstValue(item, [
+    "year", "releaseDate", "release_date", "firstAirDate", "first_air_date",
+    "publishDate", "publish_date", "date"
+  ]) || "");
+  var match = raw.match(/\d{4}/);
+  return match ? match[0] : "";
+}
+
+function itemType(item) {
+  return String(firstValue(item, [
+    "type", "contentType", "content_type", "vodType", "vod_type", "category"
+  ]) || "").toLowerCase();
 }
 
 function titleScore(candidate, expected) {
@@ -300,13 +335,19 @@ function titleScore(candidate, expected) {
   var right = normalizeTitle(expected);
   if (!left || !right) return 0;
   if (left === right) return 100;
-  if (left.indexOf(right) !== -1 || right.indexOf(left) !== -1) return 76;
-  var expectedWords = right.split(" ");
-  var candidateWords = left.split(" ");
+  if (left.indexOf(right) !== -1 || right.indexOf(left) !== -1) return 82;
+
+  var expectedWords = right.split(" ").filter(function(word) { return word.length > 1; });
+  var candidateWords = left.split(" ").filter(function(word) { return word.length > 1; });
   var set = {};
   candidateWords.forEach(function(word) { set[word] = true; });
-  var matched = expectedWords.filter(function(word) { return word.length > 1 && set[word]; }).length;
-  return Math.round((matched / Math.max(expectedWords.length, 1)) * 65);
+
+  var matched = expectedWords.filter(function(word) { return set[word]; }).length;
+  if (!matched) return 0;
+
+  var recall = matched / Math.max(expectedWords.length, 1);
+  var precision = matched / Math.max(candidateWords.length, 1);
+  return Math.round((recall * 0.7 + precision * 0.3) * 72);
 }
 
 function extractSeasonFromTitle(title) {
@@ -324,16 +365,29 @@ function extractSeasonFromTitle(title) {
 }
 
 function scoreCandidate(item, info, mediaType, season) {
-  var score = Math.max(titleScore(item && item.title, info.title), titleScore(item && item.title, info.originalTitle));
-  var itemYear = String(item && item.year || "").match(/\d{4}/);
-  if (info.year && itemYear && itemYear[0] === info.year) score += 25;
-  var itemType = String(item && item.type || "").toLowerCase();
-  if (mediaType === "movie" && itemType === "movie") score += 18;
-  if (mediaType === "tv" && itemType && itemType !== "movie") score += 10;
+  var score = Math.max(
+    titleScore(itemTitle(item), info.title),
+    titleScore(itemTitle(item), info.originalTitle)
+  );
+
+  var directTmdb = firstValue(item, ["tmdbId", "tmdb_id", "themoviedbId", "themoviedb_id"]);
+  if (directTmdb && String(directTmdb) === String(info.tmdbId || "")) score += 200;
+
+  var year = itemYear(item);
+  if (info.year && year && year === info.year) score += 28;
+
+  var type = itemType(item);
+  if (mediaType === "movie" && (type === "movie" || type === "film")) score += 18;
+  if (mediaType === "tv" && type && type !== "movie" && type !== "film") score += 10;
+
+  var rank = Number(item && item.__vueoSearchRank || 0);
+  var queryIndex = Number(item && item.__vueoQueryIndex || 0);
+  score += Math.max(0, 18 - rank * 3);
+  if (queryIndex === 0) score += 6;
 
   if (mediaType === "tv") {
     var requestedSeason = Number(season || 1);
-    var titleSeason = extractSeasonFromTitle(item && item.title);
+    var titleSeason = extractSeasonFromTitle(itemTitle(item));
     if (requestedSeason > 1) {
       if (titleSeason === requestedSeason) score += 35;
       else if (titleSeason !== null) score -= 40;
@@ -350,6 +404,7 @@ function getTmdbInfo(tmdbId, mediaType) {
     "?api_key=" + TMDB_API_KEY;
   return fetchJson(url, {}).then(function(data) {
     return {
+      tmdbId: String(tmdbId),
       title: data.title || data.name || "",
       originalTitle: data.original_title || data.original_name || "",
       year: String(data.release_date || data.first_air_date || "").split("-")[0]
@@ -363,7 +418,24 @@ function searchOneTouch(query, page) {
   var url = BASE_URL + "/vod/search?page=" + String(page || 1) + "&keyword=" + encodeURIComponent(clean);
   return fetchDecryptedJson(url, { "Referer": BASE_URL + "/" }).then(function(data) {
     if (Array.isArray(data)) return data;
-    return data && Array.isArray(data.result) ? data.result : [];
+    if (!data || typeof data !== "object") return [];
+
+    var candidates = [
+      data.result,
+      data.items,
+      data.list,
+      data.records,
+      data.data,
+      data.data && data.data.items,
+      data.data && data.data.list,
+      data.result && data.result.items,
+      data.result && data.result.list
+    ];
+
+    for (var i = 0; i < candidates.length; i++) {
+      if (Array.isArray(candidates[i])) return candidates[i];
+    }
+    return [];
   });
 }
 
@@ -374,9 +446,11 @@ function getDetail(id) {
 function findBestTitle(info, mediaType, season) {
   var requestedSeason = mediaType === "tv" ? Number(season || 1) : 0;
   var queries = [info.title];
+
   if (info.originalTitle && normalizeTitle(info.originalTitle) !== normalizeTitle(info.title)) {
     queries.push(info.originalTitle);
   }
+
   if (requestedSeason > 1) {
     queries.push(info.title + " Season " + requestedSeason);
     if (info.originalTitle && normalizeTitle(info.originalTitle) !== normalizeTitle(info.title)) {
@@ -387,11 +461,16 @@ function findBestTitle(info, mediaType, season) {
   return Promise.all(queries.map(function(query) { return searchOneTouch(query, 1); })).then(function(groups) {
     var seen = {};
     var candidates = [];
-    groups.forEach(function(group) {
-      group.forEach(function(item) {
-        var id = item && item.id;
+
+    groups.forEach(function(group, queryIndex) {
+      group.forEach(function(rawItem, rank) {
+        var id = itemId(rawItem);
         if (id === undefined || id === null || seen[String(id)]) return;
         seen[String(id)] = true;
+
+        var item = Object.assign({}, rawItem);
+        item.__vueoSearchRank = rank;
+        item.__vueoQueryIndex = queryIndex;
         candidates.push(item);
       });
     });
@@ -399,20 +478,42 @@ function findBestTitle(info, mediaType, season) {
     candidates.sort(function(a, b) {
       return scoreCandidate(b, info, mediaType, season) - scoreCandidate(a, info, mediaType, season);
     });
-    candidates = candidates.slice(0, 8);
+
+    candidates = candidates.slice(0, 6);
     if (!candidates.length) throw new Error("No OneTouchTV title match");
 
     return Promise.all(candidates.map(function(candidate) {
-      return getDetail(candidate.id).then(function(detail) {
+      var id = itemId(candidate);
+      return getDetail(id).then(function(detail) {
         var score = scoreCandidate(candidate, info, mediaType, season);
-        score = Math.max(score, titleScore(detail && detail.title, info.title), titleScore(detail && detail.title, info.originalTitle));
-        var detailYear = String(detail && detail.year || "").match(/\d{4}/);
-        if (info.year && detailYear && detailYear[0] === info.year) score += 20;
+
+        var detailTitle = itemTitle(detail);
+        score = Math.max(
+          score,
+          titleScore(detailTitle, info.title) + 20,
+          titleScore(detailTitle, info.originalTitle) + 20
+        );
+
+        var detailYear = itemYear(detail);
+        if (info.year && detailYear && detailYear === info.year) score += 20;
+
         return { candidate: candidate, detail: detail, score: score };
-      }).catch(function() { return null; });
+      }).catch(function() {
+        return null;
+      });
     })).then(function(matches) {
       matches = matches.filter(Boolean).sort(function(a, b) { return b.score - a.score; });
-      if (!matches.length || matches[0].score < 60) throw new Error("OneTouchTV match confidence too low");
+      if (!matches.length) throw new Error("No OneTouchTV detail match");
+
+      /*
+       * The OneTouchTV server already ranked these results for the exact TMDB
+       * title query. Do not reject a top server result solely because the site
+       * uses an alternate English title while TMDB uses another alias.
+       */
+      if (matches[0].score < 28) {
+        throw new Error("OneTouchTV match confidence too low");
+      }
+
       return matches[0];
     });
   });
@@ -428,7 +529,11 @@ function episodeNumber(value) {
 }
 
 function selectEpisode(detail, mediaType, episode) {
-  var episodes = detail && Array.isArray(detail.episodes) ? detail.episodes : [];
+  var root = detail && detail.result && typeof detail.result === "object" ? detail.result :
+    detail && detail.data && typeof detail.data === "object" ? detail.data : detail;
+  var episodes = root && Array.isArray(root.episodes) ? root.episodes :
+    root && Array.isArray(root.episodeList) ? root.episodeList :
+    root && Array.isArray(root.episode_list) ? root.episode_list : [];
   if (!episodes.length) throw new Error("No OneTouchTV episodes");
   if (mediaType === "movie" || episodes.length === 1) return episodes[0];
 
@@ -544,8 +649,8 @@ function getStreams(tmdbId, mediaType, season, episode) {
     })
     .then(function(match) {
       var selected = selectEpisode(match.detail, type, episode);
-      var identifier = selected && selected.identifier;
-      var playId = selected && selected.playId;
+      var identifier = selected && (selected.identifier || selected.contentIdentifier || selected.content_identifier);
+      var playId = selected && (selected.playId || selected.play_id || selected.playID);
       if (!identifier || !playId) throw new Error("OneTouchTV episode identifier is missing");
       return getEpisodePayload(identifier, playId);
     })
