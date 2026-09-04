@@ -1,6 +1,6 @@
 {
   "name": "VUEO Stock",
-  "version": "1.2.1",
+  "version": "1.3.0",
   "scrapers": [
     {
       "id": "kisskh",
@@ -59,6 +59,265 @@
       "disabledPlatforms": [],
       "supportsExternalPlayer": true,
       "notes": "Supports movies and TV episodes through the OneTouchTV encrypted API, including direct stream sources, playback headers and available subtitle tracks."
+    },
+    {
+      "id": "animekai",
+      "name": "AnimeKai",
+      "description": "Anime TV episode stream provider",
+      "version": "1.0.0",
+      "author": "Luckez",
+      "supportedTypes": [
+        "tv"
+      ],
+      "filename": "providers/animekai.js",
+      "enabled": true
+    },
+    {
+      "id": "dahmermovies",
+      "name": "DahmerMovies",
+      "description": "Movie and TV stream provider",
+      "version": "1.0.0",
+      "author": "Luckez",
+      "supportedTypes": [
+        "movie",
+        "tv"
+      ],
+      "filename": "providers/dahmermovies.js",
+      "enabled": true
+    },
+    {
+      "id": "dvdplay",
+      "name": "DVDPlay",
+      "description": "Movie and TV stream provider",
+      "version": "1.0.0",
+      "author": "Luckez",
+      "supportedTypes": [
+        "movie",
+        "tv"
+      ],
+      "filename": "providers/dvdplay.js",
+      "enabled": true
+    },
+    {
+      "id": "hdhub4u",
+      "name": "HDHub4u",
+      "description": "Movie and TV stream provider",
+      "version": "1.0.0",
+      "author": "Luckez",
+      "supportedTypes": [
+        "movie",
+        "tv"
+      ],
+      "filename": "providers/hdhub4u.js",
+      "enabled": true
+    },
+    {
+      "id": "hdrezka",
+      "name": "HDRezka",
+      "description": "Movie and TV stream provider",
+      "version": "1.0.0",
+      "author": "Luckez",
+      "supportedTypes": [
+        "movie",
+        "tv"
+      ],
+      "filename": "providers/hdrezka.js",
+      "enabled": true
+    },
+    {
+      "id": "moviebox",
+      "name": "MovieBox",
+      "description": "Movie and TV stream provider",
+      "version": "1.0.0",
+      "author": "Luckez",
+      "supportedTypes": [
+        "movie",
+        "tv"
+      ],
+      "filename": "providers/moviebox.js",
+      "enabled": true
+    },
+    {
+      "id": "moviesmod",
+      "name": "MoviesMod",
+      "description": "Movie and TV stream provider",
+      "version": "1.0.0",
+      "author": "Luckez",
+      "supportedTypes": [
+        "movie",
+        "tv"
+      ],
+      "filename": "providers/moviesmod.js",
+      "enabled": true
+    },
+    {
+      "id": "netmirror",
+      "name": "NetMirror",
+      "description": "Movie and TV streams from supported OTT mirrors",
+      "version": "1.0.0",
+      "author": "Luckez",
+      "supportedTypes": [
+        "movie",
+        "tv"
+      ],
+      "filename": "providers/netmirror.js",
+      "enabled": true
+    },
+    {
+      "id": "showbox",
+      "name": "ShowBox",
+      "description": "Movie and TV stream provider",
+      "version": "1.0.0",
+      "author": "Luckez",
+      "supportedTypes": [
+        "movie",
+        "tv"
+      ],
+      "filename": "providers/showbox.js",
+      "enabled": true
+    },
+    {
+      "id": "streamflix",
+      "name": "StreamFlix",
+      "description": "Movie and TV stream provider",
+      "version": "1.0.0",
+      "author": "Luckez",
+      "supportedTypes": [
+        "movie",
+        "tv"
+      ],
+      "filename": "providers/streamflix.js",
+      "enabled": true
+    },
+    {
+      "id": "uhdmovies",
+      "name": "UHDMovies",
+      "description": "Movie and TV stream provider",
+      "version": "1.0.0",
+      "author": "Luckez",
+      "supportedTypes": [
+        "movie",
+        "tv"
+      ],
+      "filename": "providers/uhdmovies.js",
+      "enabled": true
+    },
+    {
+      "id": "videasy",
+      "name": "VideoEasy",
+      "description": "Movie and TV stream provider",
+      "version": "1.0.0",
+      "author": "Luckez",
+      "supportedTypes": [
+        "movie",
+        "tv"
+      ],
+      "filename": "providers/videasy.js",
+      "enabled": true
+    },
+    {
+      "id": "vidlink",
+      "name": "Vidlink",
+      "description": "Movie and TV stream provider",
+      "version": "1.0.0",
+      "author": "Luckez",
+      "supportedTypes": [
+        "movie",
+        "tv"
+      ],
+      "filename": "providers/vidlink.js",
+      "enabled": true
+    },
+    {
+      "id": "vidnest-anime",
+      "name": "Vidnest Anime",
+      "description": "Anime movie and TV stream provider",
+      "version": "1.0.0",
+      "author": "Luckez",
+      "supportedTypes": [
+        "movie",
+        "tv"
+      ],
+      "filename": "providers/vidnest-anime.js",
+      "enabled": true
+    },
+    {
+      "id": "vidnest",
+      "name": "Vidnest",
+      "description": "Movie and TV stream provider",
+      "version": "1.0.0",
+      "author": "Luckez",
+      "supportedTypes": [
+        "movie",
+        "tv"
+      ],
+      "filename": "providers/vidnest.js",
+      "enabled": true
+    },
+    {
+      "id": "vidrock",
+      "name": "Vidrock",
+      "description": "Movie and TV stream provider",
+      "version": "1.0.0",
+      "author": "Luckez",
+      "supportedTypes": [
+        "movie",
+        "tv"
+      ],
+      "filename": "providers/vidrock.js",
+      "enabled": true
+    },
+    {
+      "id": "vixsrc",
+      "name": "Vixsrc",
+      "description": "Movie and TV HLS stream provider",
+      "version": "1.0.0",
+      "author": "Luckez",
+      "supportedTypes": [
+        "movie",
+        "tv"
+      ],
+      "filename": "providers/vixsrc.js",
+      "enabled": true
+    },
+    {
+      "id": "watch32",
+      "name": "Watch32",
+      "description": "Movie and TV stream provider",
+      "version": "1.0.0",
+      "author": "Luckez",
+      "supportedTypes": [
+        "movie",
+        "tv"
+      ],
+      "filename": "providers/watch32.js",
+      "enabled": true
+    },
+    {
+      "id": "xprime",
+      "name": "Xprime",
+      "description": "Movie and TV stream provider",
+      "version": "1.0.0",
+      "author": "Luckez",
+      "supportedTypes": [
+        "movie",
+        "tv"
+      ],
+      "filename": "providers/xprime.js",
+      "enabled": true
+    },
+    {
+      "id": "yflix",
+      "name": "YFlix",
+      "description": "Movie and TV stream provider",
+      "version": "1.0.0",
+      "author": "Luckez",
+      "supportedTypes": [
+        "movie",
+        "tv"
+      ],
+      "filename": "providers/yflix.js",
+      "enabled": true
     }
   ]
 }
