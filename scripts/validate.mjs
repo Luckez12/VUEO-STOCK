@@ -39,6 +39,7 @@ for (const scraper of manifest.scrapers) {
   ids.add(scraper.id);
 
   if (!/^\d+\.\d+\.\d+$/.test(scraper.version)) fail(`Invalid version for ${scraper.id}`);
+
   if (!Array.isArray(scraper.supportedTypes) || scraper.supportedTypes.length === 0) {
     fail(`supportedTypes is required for ${scraper.id}`);
   }
@@ -57,6 +58,7 @@ for (const scraper of manifest.scrapers) {
 
   const source = fs.readFileSync(providerPath, 'utf8');
   const moduleObject = { exports: {} };
+
   const sandbox = {
     module: moduleObject,
     exports: moduleObject.exports,
@@ -66,11 +68,24 @@ for (const scraper of manifest.scrapers) {
     URL,
     URLSearchParams,
     setTimeout,
-    clearTimeout
+    clearTimeout,
+    Buffer,
+    process: { env: {} },
+    fetch: globalThis.fetch,
+    atob: globalThis.atob,
+    btoa: globalThis.btoa
   };
 
+  // React Native style provider compatibility.
+  // Some existing Nuvio-compatible providers reference global/globalThis.
+  sandbox.global = sandbox;
+  sandbox.globalThis = sandbox;
+
   try {
-    vm.runInNewContext(source, sandbox, { filename: scraper.filename, timeout: 2000 });
+    vm.runInNewContext(source, sandbox, {
+      filename: scraper.filename,
+      timeout: 2000
+    });
   } catch (error) {
     fail(`Cannot load ${scraper.filename}: ${error.message}`);
   }
