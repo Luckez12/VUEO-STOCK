@@ -1970,6 +1970,107 @@ function extractGenericHost(url, referer, depth) {
   });
 }
 
+
+function nativeWebViewAvailable() {
+  return (
+    typeof globalThis !== "undefined" &&
+    typeof globalThis.webviewResolve === "function"
+  );
+}
+
+function resolveWithNativeWebView(url, referer, label) {
+  if (!nativeWebViewAvailable()) {
+    return Promise.resolve(emptyResolved());
+  }
+
+  var absolute = safeUrl(url, referer);
+  if (!absolute) return Promise.resolve(emptyResolved());
+
+  console.log(
+    "[" + PROVIDER_NAME + "] native WebView start host=" + hostOf(absolute)
+  );
+
+  return globalThis.webviewResolve(absolute, {
+    referer: referer || absolute,
+    timeoutMs: 14000,
+    finishAfterFirstMs: 700,
+    clickDelaysMs: [
+      650,
+      1300,
+      2200,
+      3400,
+      5000,
+      7000,
+      9500,
+      12000
+    ],
+    match: [
+      "/sora/",
+      ".m3u8",
+      ".mp4",
+      ".m4v"
+    ],
+    blocked: [
+      "doubleclick",
+      "googlesyndication",
+      "/ads/",
+      "vast"
+    ],
+    injectAbyssHook: true
+  }).then(function(result) {
+    var nativeStreams =
+      result && Array.isArray(result.streams)
+        ? result.streams
+        : [];
+
+    var streams = nativeStreams
+      .map(function(item) {
+        if (!item || !item.url) return null;
+
+        var headers =
+          item.headers && typeof item.headers === "object"
+            ? item.headers
+            : {};
+
+        return {
+          url: String(item.url),
+          quality: inferQuality(
+            item.url,
+            item.label || label || PROVIDER_NAME
+          ),
+          referer:
+            headers.Referer ||
+            headers.referer ||
+            referer ||
+            absolute,
+          headers: headers,
+          serverLabel:
+            label ||
+            item.label ||
+            "WebView"
+        };
+      })
+      .filter(Boolean);
+
+    console.log(
+      "[" + PROVIDER_NAME + "] native WebView streams=" + streams.length
+    );
+
+    return {
+      streams: streams,
+      subtitles: []
+    };
+  }).catch(function(error) {
+    console.log(
+      "[" + PROVIDER_NAME + "] native WebView failed host=" +
+      hostOf(absolute) +
+      " error=" +
+      (error && error.message ? error.message : String(error))
+    );
+    return emptyResolved();
+  });
+}
+
 function extractorNameFor(url) {
   var host = hostOf(url);
 
@@ -2010,7 +2111,7 @@ function dispatchExtractor(url, referer, depth) {
   else if (name === "LuluStream") work = extractLulu(url, referer);
   else if (name === "Voe") work = extractVoe(url, referer);
   else if (name === "ByseSX") work = extractGenericHost(url, referer, depth || 0);
-  else if (name === "BrowserPlayer") work = extractGenericHost(url, referer, depth || 0);
+  else if (name === "BrowserPlayer") work = resolveWithNativeWebView(url, referer, "BrowserPlayer");
   else work = extractGenericHost(url, referer, depth || 0);
 
   return Promise.resolve(work).then(function(resolved) {
@@ -2021,11 +2122,26 @@ function dispatchExtractor(url, referer, depth) {
      * A recognised host can change its frontend. If the specific extraction
      * produced nothing, try the generic packed/JWPlayer parser before giving up.
      */
-    if (streams || name === "Generic") return resolved || emptyResolved();
+    if (streams) return resolved || emptyResolved();
 
-    return extractGenericHost(url, referer, 1).catch(function() {
-      return resolved || emptyResolved();
-    });
+    return extractGenericHost(url, referer, 1)
+      .catch(function() {
+        return resolved || emptyResolved();
+      })
+      .then(function(genericResolved) {
+        var genericStreams =
+          genericResolved && Array.isArray(genericResolved.streams)
+            ? genericResolved.streams.length
+            : 0;
+
+        if (genericStreams) return genericResolved;
+
+        return resolveWithNativeWebView(
+          url,
+          referer,
+          name === "Generic" ? "WebView" : name
+        );
+      });
   });
 }
 
@@ -2089,7 +2205,7 @@ function resolveOption(option, pageUrl) {
       mirrors.slice(0, 3).map(function(mirror) {
         return resolveMirror(mirror, pageUrl);
       }),
-      2900
+      15500
     );
   });
 }
@@ -2149,7 +2265,7 @@ function resolvePlayback(html, pageUrl) {
    * prevents a dead BrowserPlayer mirror from consuming the whole provider
    * budget before another server is tried.
    */
-  return firstNonEmpty(tasks, 4700);
+  return firstNonEmpty(tasks, 16500);
 }
 
 function buildStreams(resolved, info, mediaType, season, episode) {
@@ -2269,7 +2385,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
       return streams;
     });
 
-  return withSoftTimeout(work, 7900, "MSM21 provider")
+  return withSoftTimeout(work, 19000, "MSM21 provider")
     .catch(function(error) {
       console.error(
         "[MSM21] " +

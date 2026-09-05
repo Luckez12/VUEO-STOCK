@@ -1319,6 +1319,151 @@ function extractGenericHost(url, referer, depth) {
   });
 }
 
+
+function firstNonEmptyResolved(tasks, timeoutMs) {
+  if (!Array.isArray(tasks) || !tasks.length) {
+    return Promise.resolve(emptyResolved());
+  }
+
+  return new Promise(function(resolve) {
+    var pending = tasks.length;
+    var settled = false;
+
+    function finish(value) {
+      if (settled) return;
+      settled = true;
+      resolve(value || emptyResolved());
+    }
+
+    tasks.forEach(function(task) {
+      Promise.resolve(task)
+        .then(function(value) {
+          var count =
+            value && Array.isArray(value.streams)
+              ? value.streams.length
+              : 0;
+
+          if (count > 0) {
+            finish(value);
+            return;
+          }
+
+          pending -= 1;
+          if (pending <= 0) finish(emptyResolved());
+        })
+        .catch(function() {
+          pending -= 1;
+          if (pending <= 0) finish(emptyResolved());
+        });
+    });
+
+    setTimeout(function() {
+      finish(emptyResolved());
+    }, timeoutMs);
+  });
+}
+
+
+function nativeWebViewAvailable() {
+  return (
+    typeof globalThis !== "undefined" &&
+    typeof globalThis.webviewResolve === "function"
+  );
+}
+
+function resolveWithNativeWebView(url, referer, label) {
+  if (!nativeWebViewAvailable()) {
+    return Promise.resolve(emptyResolved());
+  }
+
+  var absolute = safeUrl(url, referer);
+  if (!absolute) return Promise.resolve(emptyResolved());
+
+  console.log(
+    "[" + PROVIDER_NAME + "] native WebView start host=" + hostOf(absolute)
+  );
+
+  return globalThis.webviewResolve(absolute, {
+    referer: referer || absolute,
+    timeoutMs: 14000,
+    finishAfterFirstMs: 700,
+    clickDelaysMs: [
+      650,
+      1300,
+      2200,
+      3400,
+      5000,
+      7000,
+      9500,
+      12000
+    ],
+    match: [
+      "/sora/",
+      ".m3u8",
+      ".mp4",
+      ".m4v"
+    ],
+    blocked: [
+      "doubleclick",
+      "googlesyndication",
+      "/ads/",
+      "vast"
+    ],
+    injectAbyssHook: true
+  }).then(function(result) {
+    var nativeStreams =
+      result && Array.isArray(result.streams)
+        ? result.streams
+        : [];
+
+    var streams = nativeStreams
+      .map(function(item) {
+        if (!item || !item.url) return null;
+
+        var headers =
+          item.headers && typeof item.headers === "object"
+            ? item.headers
+            : {};
+
+        return {
+          url: String(item.url),
+          quality: inferQuality(
+            item.url,
+            item.label || label || PROVIDER_NAME
+          ),
+          referer:
+            headers.Referer ||
+            headers.referer ||
+            referer ||
+            absolute,
+          headers: headers,
+          serverLabel:
+            label ||
+            item.label ||
+            "WebView"
+        };
+      })
+      .filter(Boolean);
+
+    console.log(
+      "[" + PROVIDER_NAME + "] native WebView streams=" + streams.length
+    );
+
+    return {
+      streams: streams,
+      subtitles: []
+    };
+  }).catch(function(error) {
+    console.log(
+      "[" + PROVIDER_NAME + "] native WebView failed host=" +
+      hostOf(absolute) +
+      " error=" +
+      (error && error.message ? error.message : String(error))
+    );
+    return emptyResolved();
+  });
+}
+
 function extractorNameFor(url) {
   var host = hostOf(url);
 
@@ -1359,11 +1504,26 @@ function dispatchExtractor(url, referer, depth) {
      * A recognised host can change its frontend. If the specific extraction
      * produced nothing, try the generic packed/JWPlayer parser before giving up.
      */
-    if (streams || name === "Generic") return resolved || emptyResolved();
+    if (streams) return resolved || emptyResolved();
 
-    return extractGenericHost(url, referer, 1).catch(function() {
-      return resolved || emptyResolved();
-    });
+    return extractGenericHost(url, referer, 1)
+      .catch(function() {
+        return resolved || emptyResolved();
+      })
+      .then(function(genericResolved) {
+        var genericStreams =
+          genericResolved && Array.isArray(genericResolved.streams)
+            ? genericResolved.streams.length
+            : 0;
+
+        if (genericStreams) return genericResolved;
+
+        return resolveWithNativeWebView(
+          url,
+          referer,
+          name === "Generic" ? "WebView" : name
+        );
+      });
   });
 }
 
@@ -1420,16 +1580,19 @@ function resolveMovieplayFrames(html, pageUrl) {
    * Cloudstream calls loadExtractor for every iframe in div.movieplay.
    * Run them in parallel so multiple servers do not multiply total latency.
    */
-  return Promise.all(frames.map(function(frame) {
-    return loadExtractorEquivalent(frame, pageUrl, 0).catch(function(error) {
-      console.log(
-        "[PencuriMovie] extractor failed host=" + hostOf(frame) +
-        " error=" + (error && error.message ? error.message : String(error))
-      );
-      return emptyResolved();
-    });
-  })).then(function(children) {
-    children.forEach(function(child) { mergeResolved(resolved, child); });
+  return firstNonEmptyResolved(
+    frames.map(function(frame) {
+      return loadExtractorEquivalent(frame, pageUrl, 0).catch(function(error) {
+        console.log(
+          "[PencuriMovie] extractor failed host=" + hostOf(frame) +
+          " error=" + (error && error.message ? error.message : String(error))
+        );
+        return emptyResolved();
+      });
+    }),
+    16000
+  ).then(function(child) {
+    mergeResolved(resolved, child);
     return resolved;
   });
 }
@@ -1548,7 +1711,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
       return streams;
     });
 
-  return withSoftTimeout(work, 9000, "PencuriMovie provider")
+  return withSoftTimeout(work, 19000, "PencuriMovie provider")
     .catch(function(error) {
       console.error(
         "[PencuriMovie] " +

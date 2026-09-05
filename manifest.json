@@ -1,6 +1,6 @@
 {
   "name": "VUEO Stock",
-  "version": "1.6.3",
+  "version": "1.7.0",
   "scrapers": [
     {
       "id": "kisskh",
@@ -362,7 +362,7 @@
       "id": "pencurimovie",
       "name": "PencuriMovie",
       "description": "Malaysia and Indonesia movie and TV streams with multi-server playback",
-      "version": "1.1.0",
+      "version": "1.2.0",
       "author": "Luckez",
       "supportedTypes": [
         "movie",
@@ -383,13 +383,14 @@
       ],
       "disabledPlatforms": [],
       "supportsExternalPlayer": true,
-      "notes": "Cloudstream-style PencuriMovie flow: exact movieplay iframe selection, manual redirect resolution, host-specific extractor dispatch, packed JWPlayer extraction, subtitles, movies and TV episodes."
+      "notes": "Cloudstream-style movieplay extraction with VUEO native webviewResolve() fallback for browser-only player hosts, plus standard host-specific extractors. Provider runtime timeout is 20 seconds.",
+      "runtimeTimeoutMs": 20000
     },
     {
       "id": "msm21",
       "name": "MSM21",
       "description": "Malay subtitle movie and TV streams using Zeta player multi-server extraction",
-      "version": "1.0.3",
+      "version": "1.1.0",
       "author": "Luckez",
       "supportedTypes": [
         "movie",
@@ -410,7 +411,8 @@
       ],
       "disabledPlatforms": [],
       "supportsExternalPlayer": true,
-      "notes": "MSM21 fast resolver with a closer HTTP equivalent of the Cloudstream WebView probe. Captures /sora/, M3U8, MP4 and M4V URLs from player HTML, fetch/XHR hints and external player scripts. Static mirrors and Zeta server options are raced in parallel."
+      "notes": "Uses VUEO native webviewResolve() for Abyss, PlayerX and browser-only players, while retaining direct permalink resolution, Zeta AJAX and standard host extractors. Provider runtime timeout is 20 seconds.",
+      "runtimeTimeoutMs": 20000
     }
   ]
 }
