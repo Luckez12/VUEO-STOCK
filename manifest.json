@@ -1,6 +1,6 @@
 {
   "name": "VUEO Stock",
-  "version": "1.8.0",
+  "version": "1.8.1",
   "scrapers": [
     {
       "id": "kisskh",
@@ -418,7 +418,7 @@
       "id": "cinemode",
       "name": "CineMode",
       "description": "Movie and TV stream resolver for the CineMode streaming PWA",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "author": "Luckez",
       "supportedTypes": [
         "movie",
@@ -439,7 +439,7 @@
       "disabledPlatforms": [],
       "supportsExternalPlayer": true,
       "runtimeTimeoutMs": 20000,
-      "notes": "Replaces the invalid KissKH-based CineMode file. Uses VUEO native webviewResolve() on CineMode first, then a bounded TMDB iframe compatibility cascade when the site page does not expose a stream."
+      "notes": "Uses CineMode itself through VUEO native WebView direct-load mode. The previous speculative compatibility-server cascade was removed. Requires VUEO core WebView Direct Load Fix 3."
     }
   ]
 }
