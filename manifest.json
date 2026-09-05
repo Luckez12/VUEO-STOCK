@@ -1,6 +1,6 @@
 {
   "name": "VUEO Stock",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "scrapers": [
     {
       "id": "kisskh",
@@ -389,7 +389,7 @@
       "id": "msm21",
       "name": "MSM21",
       "description": "Malay subtitle movie and TV streams using Zeta player multi-server extraction",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "author": "Luckez",
       "supportedTypes": [
         "movie",
@@ -410,7 +410,7 @@
       ],
       "disabledPlatforms": [],
       "supportsExternalPlayer": true,
-      "notes": "Ported from the supplied Cloudstream MSM21 provider. Uses display-item search, episodes-list season/episode selection, zeta_player_ajax mirrors, and native extractor paths for Hglink/StreamWish, Dsvplay/Dood, Bysesukior, MixDropTop, plus compatible generic fallbacks."
+      "notes": "Fast-path MSM21 resolver. Movies try /movies/<slug>-<year>/ first, TV tries /tvshows/<slug>/ first, then falls back to MSM21 search. Keeps Zeta AJAX and host-specific extraction from the Cloudstream port."
     }
   ]
 }

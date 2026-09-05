@@ -330,9 +330,183 @@ function scoreCandidate(item, info, mediaType) {
   return score;
 }
 
+
+function slugifyTitle(value) {
+  var text = String(value || "");
+
+  try {
+    if (typeof text.normalize === "function") {
+      text = text.normalize("NFKD").replace(/[\u0300-\u036f]/g, "");
+    }
+  } catch (_) {}
+
+  return text
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[’'`]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .replace(/-+/g, "-");
+}
+
+function extractDetailIdentity(html) {
+  var source = String(html || "");
+  var title = "";
+
+  var detailsTitle = source.match(
+    /<[^>]*class\s*=\s*(["'])[^"']*\bdetails-title\b[^"']*\1[^>]*>[\s\S]*?<h3\b[^>]*>([\s\S]*?)<\/h3>/i
+  );
+  if (detailsTitle) title = stripTags(detailsTitle[2]);
+
+  if (!title) {
+    var og = source.match(
+      /<meta\b[^>]*property\s*=\s*(["'])og:title\1[^>]*content\s*=\s*(["'])([\s\S]*?)\2[^>]*>/i
+    );
+    if (!og) {
+      og = source.match(
+        /<meta\b[^>]*content\s*=\s*(["'])([\s\S]*?)\1[^>]*property\s*=\s*(["'])og:title\3[^>]*>/i
+      );
+      if (og) title = decodeHtml(og[2]);
+    } else {
+      title = decodeHtml(og[3]);
+    }
+  }
+
+  if (!title) {
+    var heading = source.match(/<h1\b[^>]*>([\s\S]*?)<\/h1>/i);
+    if (heading) title = stripTags(heading[1]);
+  }
+
+  var original = source.match(/Original\s+title\s*:\s*([^<\r\n]+)/i);
+  var year =
+    yearFrom(title) ||
+    yearFrom(original ? stripTags(original[1]) : "");
+
+  if (!year) {
+    var yearRow = source.match(
+      />\s*Year\s*:\s*<\/[^>]+>[\s\S]{0,500}?<a\b[^>]*>([\s\S]*?)<\/a>/i
+    );
+    if (yearRow) year = yearFrom(stripTags(yearRow[1]));
+  }
+
+  return {
+    title: String(title || "").replace(/\s*[-|]\s*movisubmalay.*$/i, "").trim(),
+    year: year
+  };
+}
+
+function isDirectPageMatch(result, info, mediaType) {
+  if (!result || !result.text) return false;
+
+  var url = String(result.url || "");
+  var lowerUrl = url.toLowerCase();
+
+  if (mediaType === "movie" && lowerUrl.indexOf("/movies/") === -1) return false;
+  if (mediaType === "tv" && lowerUrl.indexOf("/tvshows/") === -1) return false;
+
+  var identity = extractDetailIdentity(result.text);
+  if (!identity.title) return false;
+
+  var score = Math.max(
+    titleScore(identity.title, info.title),
+    titleScore(identity.title, info.originalTitle)
+  );
+
+  if (score < 58) return false;
+
+  if (info.year && identity.year && String(info.year) !== String(identity.year)) {
+    return false;
+  }
+
+  if (
+    mediaType === "tv" &&
+    result.text.indexOf("episodes-list") === -1 &&
+    lowerUrl.indexOf("/tvshows/") === -1
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
+function buildDirectCandidates(info, mediaType) {
+  var titles = [info.title];
+  if (
+    info.originalTitle &&
+    normalizeTitle(info.originalTitle) !== normalizeTitle(info.title)
+  ) {
+    titles.push(info.originalTitle);
+  }
+
+  var output = [];
+  var seen = Object.create(null);
+
+  titles.forEach(function(title) {
+    var slug = slugifyTitle(title);
+    if (!slug) return;
+
+    var paths;
+    if (mediaType === "movie") {
+      paths = info.year
+        ? ["/movies/" + slug + "-" + info.year + "/", "/movies/" + slug + "/"]
+        : ["/movies/" + slug + "/"];
+    } else {
+      paths = info.year
+        ? ["/tvshows/" + slug + "/", "/tvshows/" + slug + "-" + info.year + "/"]
+        : ["/tvshows/" + slug + "/"];
+    }
+
+    paths.forEach(function(path) {
+      var url = trimSlash(currentBaseUrl) + path;
+      if (seen[url]) return;
+      seen[url] = true;
+      output.push(url);
+    });
+  });
+
+  return output;
+}
+
+function tryDirectTitlePage(info, mediaType) {
+  var candidates = buildDirectCandidates(info, mediaType);
+  if (!candidates.length) return Promise.resolve(null);
+
+  function tryIndex(index) {
+    if (index >= candidates.length) return Promise.resolve(null);
+
+    var url = candidates[index];
+    var timeoutMs = index === 0 ? 1900 : 1200;
+
+    return requestText(
+      url,
+      { "Referer": trimSlash(currentBaseUrl) + "/" },
+      timeoutMs
+    ).then(function(result) {
+      updateBaseFromUrl(result.url || url);
+
+      if (!isDirectPageMatch(result, info, mediaType)) {
+        return tryIndex(index + 1);
+      }
+
+      console.log("[MSM21] direct permalink hit " + (result.url || url));
+      return {
+        href: result.url || url,
+        title: info.title,
+        year: info.year,
+        isSeries: mediaType === "tv",
+        __detailHtml: result.text
+      };
+    }).catch(function() {
+      return tryIndex(index + 1);
+    });
+  }
+
+  return tryIndex(0);
+}
+
 function searchSite(query) {
   var url = trimSlash(currentBaseUrl) + "/?s=" + encodeURIComponent(query);
-  return requestText(url, { "Referer": trimSlash(currentBaseUrl) + "/" }, 1800)
+  return requestText(url, { "Referer": trimSlash(currentBaseUrl) + "/" }, 2200)
     .then(function(result) {
       updateBaseFromUrl(result.url);
       return parseSearchResults(result.text, result.url || url);
@@ -340,39 +514,45 @@ function searchSite(query) {
 }
 
 function findBestTitle(info, mediaType) {
-  return searchSite(info.title).then(function(items) {
-    items.sort(function(a, b) {
-      return scoreCandidate(b, info, mediaType) - scoreCandidate(a, info, mediaType);
-    });
+  return tryDirectTitlePage(info, mediaType).then(function(direct) {
+    if (direct) return direct;
 
-    var best = items[0];
-    if (best && scoreCandidate(best, info, mediaType) >= 45) return best;
+    console.log("[MSM21] direct permalink miss, using WordPress search");
 
-    if (
-      info.originalTitle &&
-      normalizeTitle(info.originalTitle) !== normalizeTitle(info.title)
-    ) {
-      return searchSite(info.originalTitle).then(function(extra) {
-        var all = items.concat(extra);
-        var unique = Object.create(null);
-        all = all.filter(function(item) {
-          if (!item || !item.href || unique[item.href]) return false;
-          unique[item.href] = true;
-          return true;
-        });
-        all.sort(function(a, b) {
-          return scoreCandidate(b, info, mediaType) - scoreCandidate(a, info, mediaType);
-        });
-        return all[0] || null;
+    return searchSite(info.title).then(function(items) {
+      items.sort(function(a, b) {
+        return scoreCandidate(b, info, mediaType) - scoreCandidate(a, info, mediaType);
       });
-    }
 
-    return best || null;
+      var best = items[0];
+      if (best && scoreCandidate(best, info, mediaType) >= 45) return best;
+
+      /*
+       * Only perform a second search when the first search found no usable
+       * candidate. This avoids doubling the slow WordPress search path.
+       */
+      if (
+        !best &&
+        info.originalTitle &&
+        normalizeTitle(info.originalTitle) !== normalizeTitle(info.title)
+      ) {
+        return searchSite(info.originalTitle).then(function(extra) {
+          extra.sort(function(a, b) {
+            return scoreCandidate(b, info, mediaType) - scoreCandidate(a, info, mediaType);
+          });
+          return extra[0] || null;
+        });
+      }
+
+      return best || null;
+    });
   }).then(function(best) {
     if (!best) throw new Error("MSM21 title not found");
-    if (scoreCandidate(best, info, mediaType) < 30) {
+
+    if (!best.__detailHtml && scoreCandidate(best, info, mediaType) < 30) {
       throw new Error("MSM21 match confidence too low");
     }
+
     return best;
   });
 }
@@ -1783,12 +1963,21 @@ function getStreams(tmdbId, mediaType, season, episode) {
     })
     .then(function(match) {
       var detailUrl = rewriteToCurrentDomain(match.href);
-      return requestText(
-        detailUrl,
-        { "Referer": currentBaseUrl + "/" },
-        1800
-      ).then(function(detail) {
-        updateBaseFromUrl(detail.url);
+
+      var detailPromise = match.__detailHtml
+        ? Promise.resolve({
+            text: match.__detailHtml,
+            url: detailUrl
+          })
+        : requestText(
+            detailUrl,
+            { "Referer": currentBaseUrl + "/" },
+            1800
+          );
+
+      return detailPromise.then(function(detail) {
+        updateBaseFromUrl(detail.url || detailUrl);
+
         var targetUrl =
           type === "tv"
             ? parseEpisodeTarget(
@@ -1811,7 +2000,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
           { "Referer": detail.url || detailUrl },
           1700
         ).then(function(episodePage) {
-          updateBaseFromUrl(episodePage.url);
+          updateBaseFromUrl(episodePage.url || targetUrl);
           return {
             html: episodePage.text,
             url: episodePage.url || targetUrl
@@ -1835,7 +2024,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
       return streams;
     });
 
-  return withSoftTimeout(work, 9000, "MSM21 provider")
+  return withSoftTimeout(work, 8600, "MSM21 provider")
     .catch(function(error) {
       console.error(
         "[MSM21] " +
