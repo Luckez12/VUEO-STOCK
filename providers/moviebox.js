@@ -10,6 +10,9 @@ var WEB_HOSTS = [
   "https://filmboom.top"
 ];
 
+var MOVIEBOX_WEB = "https://moviebox.asia";
+var VIDEOEASY_BASE = "https://player.videasy.to";
+
 var USER_AGENT =
   "Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 " +
   "(KHTML, like Gecko) Chrome/138.0 Mobile Safari/537.36";
@@ -21,18 +24,17 @@ var COMMON_HEADERS = {
   "User-Agent": USER_AGENT
 };
 
-var SEARCH_RACE_MS = 4500;
-var DETAIL_RACE_MS = 3500;
-var PLAY_RACE_MS = 5500;
-var CAPTION_RACE_MS = 2500;
-var PROVIDER_BUDGET_MS = 18500;
+var PROVIDER_BUDGET_MS = 19000;
+var DIRECT_PLAYER_MS = 6500;
+var SEARCH_RACE_MS = 4200;
+var PLAY_RACE_MS = 5200;
+var CAPTION_RACE_MS = 2200;
 
 var preferredWebHost = null;
 
 function withSoftTimeout(promise, timeoutMs, label) {
   return new Promise(function(resolve, reject) {
     var settled = false;
-
     var timer = setTimeout(function() {
       if (settled) return;
       settled = true;
@@ -57,7 +59,7 @@ function withSoftTimeout(promise, timeoutMs, label) {
 }
 
 function raceFirstValid(tasks, timeoutMs, label) {
-  if (!Array.isArray(tasks) || tasks.length === 0) {
+  if (!Array.isArray(tasks) || !tasks.length) {
     return Promise.resolve(null);
   }
 
@@ -75,12 +77,10 @@ function raceFirstValid(tasks, timeoutMs, label) {
       Promise.resolve(task)
         .then(function(value) {
           if (settled) return;
-
           if (value) {
             finish(value);
             return;
           }
-
           pending -= 1;
           if (pending <= 0) finish(null);
         })
@@ -92,77 +92,40 @@ function raceFirstValid(tasks, timeoutMs, label) {
 
     setTimeout(function() {
       if (!settled) {
-        console.log(
-          "[MovieBox] " +
-          (label || "race") +
-          " reached " +
-          timeoutMs +
-          "ms"
-        );
+        console.log("[MovieBox] " + (label || "race") + " reached " + timeoutMs + "ms");
         finish(null);
       }
     }, timeoutMs);
   });
 }
 
-function orderedHosts(seedHost) {
-  var output = [];
-
-  function add(host) {
-    var value = String(host || "").replace(/\/+$/, "");
-    if (!value || output.indexOf(value) !== -1) return;
-    output.push(value);
-  }
-
-  add(seedHost);
-  add(preferredWebHost);
-  WEB_HOSTS.forEach(add);
-
-  return output;
-}
-
 function fetchJson(url, options, timeoutMs, label) {
-  var requestOptions = options || {};
-  var headers = Object.assign(
-    {},
-    COMMON_HEADERS,
-    requestOptions.headers || {}
-  );
-
+  var opts = options || {};
+  var headers = Object.assign({}, COMMON_HEADERS, opts.headers || {});
   var fetchOptions = {
-    method: requestOptions.method || "GET",
+    method: opts.method || "GET",
     headers: headers,
     redirect: "follow"
   };
 
-  if (requestOptions.body !== undefined) {
-    fetchOptions.body = requestOptions.body;
+  if (opts.body !== undefined) {
+    fetchOptions.body = opts.body;
   }
 
   return withSoftTimeout(
     fetch(url, fetchOptions).then(function(response) {
       if (!response.ok) {
-        throw new Error(
-          "HTTP " +
-          response.status +
-          " for " +
-          url
-        );
+        throw new Error("HTTP " + response.status + " for " + url);
       }
-
       return response.json();
     }),
-    timeoutMs || 3500,
+    timeoutMs || 3200,
     label || "MovieBox request"
   );
 }
 
 function getTmdbInfo(tmdbId, mediaType) {
-  var endpoint =
-    mediaType === "tv"
-      ? "tv"
-      : "movie";
-
+  var endpoint = mediaType === "tv" ? "tv" : "movie";
   var url =
     "https://api.themoviedb.org/3/" +
     endpoint +
@@ -173,54 +136,28 @@ function getTmdbInfo(tmdbId, mediaType) {
 
   return fetchJson(
     url,
-    {
-      headers: {
-        "Accept": "application/json"
-      }
-    },
-    1400,
+    { headers: { "Accept": "application/json" } },
+    1300,
     "TMDB"
   ).then(function(data) {
     return {
-      tmdbId: String(tmdbId),
-      title:
-        String(
-          data &&
-          (data.title || data.name) ||
-          ""
-        ).trim(),
-      originalTitle:
-        String(
-          data &&
-          (
-            data.original_title ||
-            data.original_name
-          ) ||
-          ""
-        ).trim(),
-      year:
-        String(
-          data &&
-          (
-            data.release_date ||
-            data.first_air_date
-          ) ||
-          ""
-        ).split("-")[0]
+      title: String(data && (data.title || data.name) || "").trim(),
+      originalTitle: String(
+        data && (data.original_title || data.original_name) || ""
+      ).trim(),
+      year: String(
+        data && (data.release_date || data.first_air_date) || ""
+      ).split("-")[0]
     };
   });
 }
 
 function normalizeTitle(value) {
-  var text =
-    String(value || "")
-      .toLowerCase();
+  var text = String(value || "").toLowerCase();
 
   try {
     if (typeof text.normalize === "function") {
-      text =
-        text.normalize("NFKD")
-          .replace(/[\u0300-\u036f]/g, "");
+      text = text.normalize("NFKD").replace(/[\u0300-\u036f]/g, "");
     }
   } catch (_) {}
 
@@ -230,8 +167,7 @@ function normalizeTitle(value) {
     .replace(/\b(19|20)\d{2}\b/g, " ")
     .replace(/[^a-z0-9\u00c0-\uffff]+/g, " ")
     .replace(/\s+/g, " ")
-    .trim()
-    .replace(/^(the|a|an)\s+/, "");
+    .trim();
 }
 
 function titleScore(candidate, expected) {
@@ -240,210 +176,333 @@ function titleScore(candidate, expected) {
 
   if (!left || !right) return 0;
   if (left === right) return 100;
+  if (left.indexOf(right) !== -1 || right.indexOf(left) !== -1) return 80;
 
-  if (
-    left.indexOf(right) !== -1 ||
-    right.indexOf(left) !== -1
-  ) {
-    return 82;
-  }
-
-  var leftWords =
-    left.split(" ")
-      .filter(function(word) {
-        return word.length > 1;
-      });
-
-  var rightWords =
-    right.split(" ")
-      .filter(function(word) {
-        return word.length > 1;
-      });
+  var leftWords = left.split(" ").filter(function(x) { return x.length > 1; });
+  var rightWords = right.split(" ").filter(function(x) { return x.length > 1; });
 
   if (!leftWords.length || !rightWords.length) return 0;
 
   var set = {};
-  leftWords.forEach(function(word) {
-    set[word] = true;
-  });
+  leftWords.forEach(function(word) { set[word] = true; });
 
-  var matched =
-    rightWords.filter(function(word) {
-      return set[word];
-    }).length;
-
+  var matched = rightWords.filter(function(word) { return set[word]; }).length;
   if (!matched) return 0;
 
-  var recall =
-    matched /
-    Math.max(rightWords.length, 1);
-
-  var precision =
-    matched /
-    Math.max(leftWords.length, 1);
-
   return Math.round(
-    (recall * 0.72 + precision * 0.28) * 72
+    (
+      (matched / rightWords.length) * 0.75 +
+      (matched / leftWords.length) * 0.25
+    ) * 70
   );
 }
 
 function itemYear(item) {
-  var raw =
-    String(
-      item &&
-      (
-        item.releaseDate ||
-        item.release_date ||
-        item.year ||
-        item.firstAirDate ||
-        item.first_air_date
-      ) ||
-      ""
-    );
+  var raw = String(
+    item &&
+    (
+      item.releaseDate ||
+      item.release_date ||
+      item.year ||
+      item.firstAirDate ||
+      item.first_air_date
+    ) ||
+    ""
+  );
 
-  var match =
-    raw.match(/\b(19|20)\d{2}\b/);
-
+  var match = raw.match(/\b(19|20)\d{2}\b/);
   return match ? match[0] : "";
 }
 
-function itemTypeMatches(item, mediaType) {
-  var subjectType =
-    Number(
-      item &&
-      (
-        item.subjectType !== undefined
-          ? item.subjectType
-          : item.subject_type
-      )
-    );
+function subjectTypeMatches(item, mediaType) {
+  var value = Number(
+    item &&
+    (
+      item.subjectType !== undefined
+        ? item.subjectType
+        : item.subject_type
+    )
+  );
 
-  if (!subjectType) return true;
-
-  if (mediaType === "movie") {
-    return subjectType === 1;
-  }
-
-  return subjectType !== 1;
-}
-
-function scoreCandidate(item, info, mediaType, rank) {
-  var score =
-    Math.max(
-      titleScore(item && item.title, info.title),
-      titleScore(item && item.title, info.originalTitle)
-    );
-
-  var candidateYear = itemYear(item);
-
-  if (
-    info.year &&
-    candidateYear
-  ) {
-    if (info.year === candidateYear) {
-      score += 32;
-    } else {
-      score -= 45;
-    }
-  }
-
-  if (itemTypeMatches(item, mediaType)) {
-    score += 20;
-  } else {
-    score -= 90;
-  }
-
-  score +=
-    Math.max(
-      0,
-      10 - Number(rank || 0)
-    );
-
-  return score;
+  if (!value) return true;
+  return mediaType === "movie" ? value === 1 : value !== 1;
 }
 
 function extractSearchItems(payload) {
   var data =
-    payload &&
-    payload.data &&
-    typeof payload.data === "object"
+    payload && payload.data && typeof payload.data === "object"
       ? payload.data
       : {};
 
-  if (Array.isArray(data.items)) {
-    return data.items;
-  }
-
-  if (Array.isArray(data.subjectList)) {
-    return data.subjectList;
-  }
+  if (Array.isArray(data.items)) return data.items;
+  if (Array.isArray(data.subjectList)) return data.subjectList;
 
   if (Array.isArray(data.results)) {
-    var flattened = [];
-
-    data.results.forEach(function(result) {
-      if (
-        result &&
-        Array.isArray(result.subjects)
-      ) {
-        result.subjects.forEach(function(subject) {
-          flattened.push(subject);
-        });
+    var flat = [];
+    data.results.forEach(function(group) {
+      if (group && Array.isArray(group.subjects)) {
+        group.subjects.forEach(function(item) { flat.push(item); });
       }
     });
-
-    return flattened;
+    return flat;
   }
 
   return [];
 }
 
 function pickBestCandidate(items, info, mediaType) {
-  if (!Array.isArray(items) || !items.length) {
-    return null;
-  }
+  if (!Array.isArray(items) || !items.length) return null;
 
-  var scored =
-    items.map(function(item, index) {
-      return {
-        item: item,
-        score:
-          scoreCandidate(
-            item,
-            info,
-            mediaType,
-            index
-          )
-      };
+  var scored = items
+    .map(function(item, index) {
+      var score = Math.max(
+        titleScore(item && item.title, info.title),
+        titleScore(item && item.title, info.originalTitle)
+      );
+
+      var year = itemYear(item);
+
+      if (info.year && year) {
+        if (String(info.year) === String(year)) score += 28;
+        else score -= 24;
+      }
+
+      if (subjectTypeMatches(item, mediaType)) score += 18;
+      else score -= 70;
+
+      score += Math.max(0, 8 - index);
+
+      return { item: item, score: score };
     })
     .filter(function(entry) {
-      return (
-        entry.item &&
-        entry.item.subjectId &&
-        entry.score >= 58
-      );
+      return entry.item && entry.item.subjectId;
     })
     .sort(function(a, b) {
       return b.score - a.score;
     });
 
-  return scored.length
-    ? scored[0]
-    : null;
+  if (!scored.length) return null;
+
+  /*
+   * Do not reproduce the old strict confidence bug.
+   * The Cloudstream provider itself does not apply a confidence threshold.
+   * We only reject a candidate when it has effectively no title relationship.
+   */
+  if (scored[0].score < 18) return null;
+
+  return scored[0];
 }
 
-function searchOneHost(host, query, info, mediaType) {
-  var body =
-    JSON.stringify({
-      keyword: String(query || "").trim(),
-      page: 1,
-      perPage: 24,
-      subjectType: 0
+function orderedHosts(seedHost) {
+  var result = [];
+
+  function add(host) {
+    var value = String(host || "").replace(/\/+$/, "");
+    if (!value || result.indexOf(value) !== -1) return;
+    result.push(value);
+  }
+
+  add(seedHost);
+  add(preferredWebHost);
+  WEB_HOSTS.forEach(add);
+
+  return result;
+}
+
+function nativeWebViewAvailable() {
+  return (
+    typeof globalThis !== "undefined" &&
+    typeof globalThis.webviewResolve === "function"
+  );
+}
+
+function isMediaUrl(url) {
+  var value = String(url || "").toLowerCase();
+  return (
+    value.indexOf(".m3u8") !== -1 ||
+    value.indexOf(".mp4") !== -1 ||
+    value.indexOf(".m4v") !== -1 ||
+    value.indexOf("/sora/") !== -1
+  );
+}
+
+function inferQuality(url, label) {
+  var value = (String(label || "") + " " + String(url || "")).toLowerCase();
+
+  if (value.indexOf("2160") !== -1 || value.indexOf("4k") !== -1) return "2160p";
+  if (value.indexOf("1440") !== -1) return "1440p";
+  if (value.indexOf("1080") !== -1) return "1080p";
+  if (value.indexOf("720") !== -1) return "720p";
+  if (value.indexOf("480") !== -1) return "480p";
+  if (value.indexOf("360") !== -1) return "360p";
+  return "Auto";
+}
+
+function sanitiseHeaders(input, referer) {
+  var output = {};
+  var source = input && typeof input === "object" ? input : {};
+
+  Object.keys(source).forEach(function(key) {
+    var lower = String(key || "").toLowerCase();
+
+    if (
+      lower === "host" ||
+      lower === "connection" ||
+      lower === "content-length" ||
+      lower === "accept-encoding" ||
+      lower === "range" ||
+      lower === "origin" ||
+      lower.indexOf("sec-fetch-") === 0
+    ) {
+      return;
+    }
+
+    output[key] = String(source[key]);
+  });
+
+  output["User-Agent"] =
+    output["User-Agent"] ||
+    output["user-agent"] ||
+    USER_AGENT;
+
+  output["Referer"] = referer;
+  delete output["referer"];
+
+  return output;
+}
+
+function buildCurrentPlayerUrl(mediaType, tmdbId, season, episode) {
+  if (mediaType === "tv") {
+    return (
+      VIDEOEASY_BASE +
+      "/tv/" +
+      encodeURIComponent(tmdbId) +
+      "/" +
+      encodeURIComponent(season || 1) +
+      "/" +
+      encodeURIComponent(episode || 1)
+    );
+  }
+
+  return VIDEOEASY_BASE + "/movie/" + encodeURIComponent(tmdbId);
+}
+
+function resolveCurrentMovieBoxPlayer(tmdbId, mediaType, season, episode) {
+  if (!nativeWebViewAvailable()) {
+    return Promise.resolve([]);
+  }
+
+  var playerUrl = buildCurrentPlayerUrl(
+    mediaType,
+    tmdbId,
+    season,
+    episode
+  );
+
+  console.log("[MovieBox] Direct current player=" + playerUrl);
+
+  return globalThis.webviewResolve(playerUrl, {
+    referer:
+      MOVIEBOX_WEB +
+      "/watch/" +
+      mediaType +
+      "/" +
+      encodeURIComponent(tmdbId) +
+      "/",
+    directLoad: true,
+    timeoutMs: DIRECT_PLAYER_MS,
+    finishAfterFirstMs: 500,
+    suppressPopups: true,
+    lockMainFrameHost: false,
+    interactionTexts: [
+      "play",
+      "continue",
+      "watch",
+      "skip",
+      "close"
+    ],
+    clickDelaysMs: [
+      500,
+      1200,
+      2300,
+      3800,
+      5200
+    ],
+    match: [
+      ".m3u8",
+      ".mp4",
+      ".m4v",
+      "/sora/"
+    ],
+    blocked: [
+      "doubleclick",
+      "googlesyndication",
+      "/vast"
+    ],
+    injectAbyssHook: true
+  }).then(function(result) {
+    var captured =
+      result && Array.isArray(result.streams)
+        ? result.streams
+        : [];
+
+    var seen = {};
+
+    var streams = captured
+      .filter(function(item) {
+        return item && item.url && isMediaUrl(item.url);
+      })
+      .filter(function(item) {
+        var url = String(item.url);
+        if (seen[url]) return false;
+        seen[url] = true;
+        return true;
+      })
+      .map(function(item, index) {
+        var url = String(item.url);
+
+        return {
+          name:
+            PROVIDER_NAME +
+            " Zen" +
+            (index > 0 ? " " + (index + 1) : ""),
+          title: PROVIDER_NAME,
+          url: url,
+          quality: inferQuality(url, item.label),
+          type: "direct",
+          subtitles: [],
+          headers: sanitiseHeaders(
+            item.headers,
+            playerUrl
+          )
+        };
+      });
+
+    streams.sort(function(a, b) {
+      var qa = parseInt(String(a.quality), 10) || 0;
+      var qb = parseInt(String(b.quality), 10) || 0;
+      return qb - qa;
     });
 
-  var url =
-    host +
-    "/wefeed-h5-bff/web/subject/search";
+    console.log("[MovieBox] Current player streams=" + streams.length);
+    return streams;
+  }).catch(function(error) {
+    console.log(
+      "[MovieBox] Current player failed: " +
+      (error && error.message ? error.message : String(error))
+    );
+    return [];
+  });
+}
+
+function searchOneHost(host, query) {
+  var url = host + "/wefeed-h5-bff/web/subject/search";
+  var body = JSON.stringify({
+    keyword: String(query || "").trim(),
+    page: 1,
+    perPage: 24,
+    subjectType: 0
+  });
 
   return fetchJson(
     url,
@@ -455,150 +514,91 @@ function searchOneHost(host, query, info, mediaType) {
       },
       body: body
     },
-    3600,
+    3200,
     "MovieBox search " + host
   ).then(function(payload) {
-    var best =
-      pickBestCandidate(
-        extractSearchItems(payload),
-        info,
-        mediaType
-      );
-
-    if (!best) return null;
-
-    return {
-      host: host,
-      item: best.item,
-      score: best.score
-    };
+    var items = extractSearchItems(payload);
+    return items.length
+      ? { host: host, items: items }
+      : null;
   });
 }
 
-function searchHostWithFallback(host, info, mediaType) {
-  return searchOneHost(
-    host,
-    info.title,
-    info,
-    mediaType
-  ).then(function(primary) {
-    if (primary) return primary;
-
-    if (
-      !info.originalTitle ||
-      normalizeTitle(info.originalTitle) ===
-        normalizeTitle(info.title)
-    ) {
-      return null;
-    }
-
-    return searchOneHost(
-      host,
-      info.originalTitle,
-      info,
-      mediaType
-    );
-  });
-}
-
-function raceSearchHosts(info, mediaType) {
+function raceSearchHostsRaw(query) {
   var hosts = orderedHosts();
-
-  console.log(
-    "[MovieBox] Racing search mirrors: " +
-    hosts.join(", ")
-  );
 
   return raceFirstValid(
     hosts.map(function(host) {
-      return searchHostWithFallback(
-        host,
-        info,
-        mediaType
-      );
+      return searchOneHost(host, query);
     }),
     SEARCH_RACE_MS,
     "search"
-  ).then(function(result) {
-    if (result) {
-      preferredWebHost = result.host;
+  );
+}
 
-      console.log(
-        "[MovieBox] Search winner=" +
-        result.host +
-        " title=" +
-        result.item.title +
-        " score=" +
-        result.score
-      );
+function searchBestCandidate(info, mediaType) {
+  return raceSearchHostsRaw(info.title).then(function(result) {
+    if (!result) return null;
+
+    var best = pickBestCandidate(result.items, info, mediaType);
+    if (best) {
+      preferredWebHost = result.host;
+      return {
+        host: result.host,
+        item: best.item,
+        score: best.score
+      };
     }
 
-    return result;
+    if (
+      info.originalTitle &&
+      normalizeTitle(info.originalTitle) !== normalizeTitle(info.title)
+    ) {
+      return raceSearchHostsRaw(info.originalTitle).then(function(extra) {
+        if (!extra) return null;
+
+        var second = pickBestCandidate(extra.items, info, mediaType);
+        if (!second) return null;
+
+        preferredWebHost = extra.host;
+        return {
+          host: extra.host,
+          item: second.item,
+          score: second.score
+        };
+      });
+    }
+
+    return null;
   });
 }
 
-function extractDetailSubject(payload) {
-  return (
-    payload &&
-    payload.data &&
-    payload.data.subject
-      ? payload.data.subject
-      : null
-  );
-}
+function extractStreams(payload) {
+  var data =
+    payload && payload.data && typeof payload.data === "object"
+      ? payload.data
+      : {};
 
-function raceDetailHosts(subjectId, seedHost) {
-  var hosts = orderedHosts(seedHost);
+  if (Array.isArray(data.streams)) return data.streams;
 
-  return raceFirstValid(
-    hosts.map(function(host) {
-      var url =
-        host +
-        "/wefeed-h5-bff/web/subject/detail?subjectId=" +
-        encodeURIComponent(subjectId);
+  if (
+    data.playInfo &&
+    Array.isArray(data.playInfo.streams)
+  ) {
+    return data.playInfo.streams;
+  }
 
-      return fetchJson(
-        url,
-        {
-          headers: {
-            "Referer": host + "/"
-          }
-        },
-        3000,
-        "MovieBox detail " + host
-      ).then(function(payload) {
-        var subject =
-          extractDetailSubject(payload);
-
-        if (!subject) return null;
-
-        return {
-          host: host,
-          subject: subject
-        };
-      });
-    }),
-    DETAIL_RACE_MS,
-    "detail"
-  );
+  return [];
 }
 
 function buildPlayReferer(host, item, subjectId) {
-  var detailPath =
-    String(
-      item &&
-      (
-        item.detailPath ||
-        item.detail_path
-      ) ||
-      ""
-    )
-      .trim()
-      .replace(/^\/+/, "");
+  var detailPath = String(
+    item && (item.detailPath || item.detail_path) || ""
+  )
+    .trim()
+    .replace(/^\/+/, "");
 
-  if (!detailPath) {
-    return host + "/";
-  }
+  if (!detailPath) return host + "/";
 
   return (
     host +
@@ -610,75 +610,16 @@ function buildPlayReferer(host, item, subjectId) {
   );
 }
 
-function extractStreams(payload) {
-  var data =
-    payload &&
-    payload.data &&
-    typeof payload.data === "object"
-      ? payload.data
-      : {};
+function racePlayHosts(item, mediaType, season, episode, seedHost) {
+  var subjectId = String(item && item.subjectId || "").trim();
+  if (!subjectId) return Promise.resolve(null);
 
-  var streams = [];
-
-  if (Array.isArray(data.streams)) {
-    streams = data.streams;
-  } else if (
-    data.playInfo &&
-    Array.isArray(data.playInfo.streams)
-  ) {
-    streams = data.playInfo.streams;
-  }
-
-  return streams.filter(function(stream) {
-    return (
-      stream &&
-      String(stream.url || "").trim()
-    );
-  });
-}
-
-function racePlayHosts(
-  item,
-  subjectId,
-  mediaType,
-  season,
-  episode,
-  seedHost
-) {
-  var hosts = orderedHosts(seedHost);
-
-  var requestedSeason =
-    mediaType === "tv"
-      ? Number(season || 1)
-      : 0;
-
-  var requestedEpisode =
-    mediaType === "tv"
-      ? Number(episode || 1)
-      : 0;
-
-  console.log(
-    "[MovieBox] Racing play mirrors for subject=" +
-    subjectId +
-    (
-      mediaType === "tv"
-        ? " S" +
-          requestedSeason +
-          "E" +
-          requestedEpisode
-        : ""
-    )
-  );
+  var requestedSeason = mediaType === "tv" ? Number(season || 1) : 0;
+  var requestedEpisode = mediaType === "tv" ? Number(episode || 1) : 0;
 
   return raceFirstValid(
-    hosts.map(function(host) {
-      var referer =
-        buildPlayReferer(
-          host,
-          item,
-          subjectId
-        );
-
+    orderedHosts(seedHost).map(function(host) {
+      var referer = buildPlayReferer(host, item, subjectId);
       var url =
         host +
         "/wefeed-h5-bff/web/subject/play" +
@@ -691,44 +632,28 @@ function racePlayHosts(
 
       return fetchJson(
         url,
-        {
-          headers: {
-            "Referer": referer
-          }
-        },
-        4600,
+        { headers: { "Referer": referer } },
+        4300,
         "MovieBox play " + host
       ).then(function(payload) {
-        var streams =
-          extractStreams(payload);
+        var streams = extractStreams(payload)
+          .filter(function(source) {
+            return source && String(source.url || "").trim();
+          });
 
-        if (!streams.length) {
-          return null;
-        }
+        if (!streams.length) return null;
 
         return {
           host: host,
           referer: referer,
+          subjectId: subjectId,
           streams: streams
         };
       });
     }),
     PLAY_RACE_MS,
     "play"
-  ).then(function(result) {
-    if (result) {
-      preferredWebHost = result.host;
-
-      console.log(
-        "[MovieBox] Play winner=" +
-        result.host +
-        " streams=" +
-        result.streams.length
-      );
-    }
-
-    return result;
-  });
+  );
 }
 
 function subtitleLanguage(caption) {
@@ -745,219 +670,104 @@ function subtitleLanguage(caption) {
         .replace(/\s+/g, " ");
     });
 
-  function hasCode(codes) {
-    return values.some(function(value) {
-      return codes.some(function(code) {
-        return (
-          value === code ||
-          value.indexOf(code + "-") === 0 ||
-          value.indexOf(code + " ") === 0 ||
-          value.indexOf(code + "(") === 0 ||
-          value.indexOf(code + "[") === 0
-        );
-      });
-    });
-  }
-
-  function hasName(names) {
+  function contains(names) {
     return values.some(function(value) {
       return names.some(function(name) {
-        return (
-          value === name ||
-          value.indexOf(name) !== -1
-        );
+        return value === name || value.indexOf(name) !== -1;
       });
     });
   }
 
-  if (
-    hasCode(["ms", "msa", "may"]) ||
-    hasName([
-      "bahasa melayu",
-      "bahasa malaysia",
-      "malay",
-      "melayu",
-      "malaysian"
-    ])
-  ) {
-    return {
-      code: "ms",
-      label: "Malay"
-    };
+  if (contains(["ms", "msa", "may", "malay", "bahasa melayu", "bahasa malaysia"])) {
+    return { code: "ms", label: "Malay" };
   }
 
-  if (
-    hasCode(["en", "eng"]) ||
-    hasName(["english"])
-  ) {
-    return {
-      code: "en",
-      label: "English"
-    };
+  if (contains(["en", "eng", "english"])) {
+    return { code: "en", label: "English" };
   }
 
-  if (
-    hasCode(["id", "ind", "in"]) ||
-    hasName([
-      "bahasa indonesia",
-      "indonesian"
-    ])
-  ) {
-    return {
-      code: "id",
-      label: "Indonesian"
-    };
+  if (contains(["id", "ind", "indonesian", "bahasa indonesia"])) {
+    return { code: "id", label: "Indonesian" };
   }
 
   return null;
 }
 
-function extractCaptions(payload) {
-  var data =
-    payload &&
-    payload.data &&
-    typeof payload.data === "object"
-      ? payload.data
-      : {};
+function raceCaptions(playResult) {
+  var seed = playResult.streams.find(function(source) {
+    return source && source.id && source.format;
+  });
 
-  return Array.isArray(data.captions)
-    ? data.captions
-    : [];
-}
-
-function raceCaptionHosts(
-  subjectId,
-  streamId,
-  format,
-  winningHost
-) {
-  if (!streamId || !format) {
-    return Promise.resolve([]);
-  }
-
-  var hosts = orderedHosts(winningHost);
+  if (!seed) return Promise.resolve([]);
 
   return raceFirstValid(
-    hosts.map(function(host) {
+    orderedHosts(playResult.host).map(function(host) {
       var url =
         host +
         "/wefeed-h5-bff/web/subject/caption" +
         "?format=" +
-        encodeURIComponent(format) +
+        encodeURIComponent(seed.format) +
         "&id=" +
-        encodeURIComponent(streamId) +
+        encodeURIComponent(seed.id) +
         "&subjectId=" +
-        encodeURIComponent(subjectId);
+        encodeURIComponent(playResult.subjectId);
 
       return fetchJson(
         url,
-        {
-          headers: {
-            "Referer": host + "/"
-          }
-        },
-        2200,
+        { headers: { "Referer": host + "/" } },
+        1900,
         "MovieBox captions " + host
       ).then(function(payload) {
-        var captions =
-          extractCaptions(payload)
-            .filter(function(caption) {
-              return (
-                caption &&
-                caption.url &&
-                subtitleLanguage(caption)
-              );
-            });
+        var data =
+          payload && payload.data && typeof payload.data === "object"
+            ? payload.data
+            : {};
 
-        return captions.length
-          ? captions
-          : null;
+        var captions = Array.isArray(data.captions)
+          ? data.captions
+          : [];
+
+        var usable = captions.filter(function(caption) {
+          return caption && caption.url && subtitleLanguage(caption);
+        });
+
+        return usable.length ? usable : null;
       });
     }),
     CAPTION_RACE_MS,
     "captions"
-  ).then(function(captions) {
-    return captions || [];
+  ).then(function(result) {
+    return result || [];
   });
 }
 
-function buildSubtitles(captions) {
-  var seen = {};
+function buildH5Streams(playResult, captions, info, mediaType, season, episode) {
+  var subtitles = [];
+  var subtitleSeen = {};
 
-  return (captions || [])
-    .map(function(caption) {
-      var url =
-        String(caption && caption.url || "").trim();
+  captions.forEach(function(caption) {
+    var url = String(caption.url || "").trim();
+    var language = subtitleLanguage(caption);
 
-      if (!url || seen[url]) return null;
+    if (!url || !language || subtitleSeen[url]) return;
+    subtitleSeen[url] = true;
 
-      var language =
-        subtitleLanguage(caption);
-
-      if (!language) return null;
-
-      seen[url] = true;
-
-      var lowerUrl =
-        url.toLowerCase();
-
-      var format =
-        lowerUrl.indexOf(".srt") !== -1
+    subtitles.push({
+      label: language.label,
+      language: language.label,
+      lang: language.code,
+      url: url,
+      default: false,
+      format:
+        url.toLowerCase().indexOf(".srt") !== -1
           ? "srt"
-          : lowerUrl.indexOf(".vtt") !== -1
+          : url.toLowerCase().indexOf(".vtt") !== -1
             ? "vtt"
-            : "";
+            : ""
+    });
+  });
 
-      return {
-        label: language.label,
-        language: language.label,
-        lang: language.code,
-        url: url,
-        default: false,
-        format: format
-      };
-    })
-    .filter(Boolean);
-}
-
-function qualityNumber(value) {
-  var text =
-    String(value || "").toLowerCase();
-
-  var match =
-    text.match(/(\d{3,4})\s*p?/);
-
-  if (match) {
-    return Number(match[1]) || 0;
-  }
-
-  if (text.indexOf("4k") !== -1) {
-    return 2160;
-  }
-
-  return 0;
-}
-
-function formatQuality(value) {
-  var number =
-    qualityNumber(value);
-
-  return number
-    ? number + "p"
-    : "Auto";
-}
-
-function buildStreams(
-  playResult,
-  subtitles,
-  info,
-  mediaType,
-  season,
-  episode
-) {
-  var seen = {};
-
-  var episodeLabel =
+  var suffix =
     mediaType === "tv"
       ? " S" +
         String(season || 1).padStart(2, "0") +
@@ -965,58 +775,32 @@ function buildStreams(
         String(episode || 1).padStart(2, "0")
       : "";
 
+  var seen = {};
+
   return playResult.streams
     .slice()
     .sort(function(a, b) {
-      return (
-        qualityNumber(b && b.resolutions) -
-        qualityNumber(a && a.resolutions)
-      );
+      var qa = parseInt(String(a && a.resolutions || ""), 10) || 0;
+      var qb = parseInt(String(b && b.resolutions || ""), 10) || 0;
+      return qb - qa;
     })
-    .map(function(source, index) {
-      var url =
-        String(
-          source &&
-          source.url ||
-          ""
-        ).trim();
-
+    .map(function(source) {
+      var url = String(source && source.url || "").trim();
       if (!url || seen[url]) return null;
       seen[url] = true;
 
-      var quality =
-        formatQuality(
-          source &&
-          (
-            source.resolutions ||
-            source.resolution ||
-            source.quality
-          )
-        );
-
-      var format =
-        String(
-          source &&
-          source.format ||
-          ""
-        ).trim();
+      var quality = inferQuality(
+        url,
+        source && (
+          source.resolutions ||
+          source.resolution ||
+          source.quality
+        )
+      );
 
       return {
-        name:
-          PROVIDER_NAME +
-          (
-            quality !== "Auto"
-              ? " " + quality
-              : ""
-          ),
-        title:
-          (info.title || PROVIDER_NAME) +
-          episodeLabel +
-          (
-            format
-              ? " • " + format.toUpperCase()
-              : ""
-          ),
+        name: PROVIDER_NAME + " " + quality,
+        title: (info.title || PROVIDER_NAME) + suffix,
         url: url,
         quality: quality,
         type: "direct",
@@ -1030,28 +814,54 @@ function buildStreams(
     .filter(Boolean);
 }
 
-function getStreams(
-  tmdbId,
-  mediaType,
-  season,
-  episode
-) {
-  var type =
-    mediaType === "tv"
-      ? "tv"
-      : "movie";
+function resolveH5Fallback(info, mediaType, season, episode) {
+  return searchBestCandidate(info, mediaType)
+    .then(function(match) {
+      if (!match) {
+        throw new Error("MovieBox H5 search found no usable candidate");
+      }
 
-  var requestedSeason =
-    Math.max(
-      1,
-      Number(season || 1)
-    );
+      console.log(
+        "[MovieBox] H5 match host=" +
+        match.host +
+        " title=" +
+        match.item.title +
+        " score=" +
+        match.score
+      );
 
-  var requestedEpisode =
-    Math.max(
-      1,
-      Number(episode || 1)
-    );
+      return racePlayHosts(
+        match.item,
+        mediaType,
+        season,
+        episode,
+        match.host
+      );
+    })
+    .then(function(playResult) {
+      if (!playResult) {
+        throw new Error("MovieBox H5 returned no playable streams");
+      }
+
+      return raceCaptions(playResult)
+        .catch(function() { return []; })
+        .then(function(captions) {
+          return buildH5Streams(
+            playResult,
+            captions,
+            info,
+            mediaType,
+            season,
+            episode
+          );
+        });
+    });
+}
+
+function getStreams(tmdbId, mediaType, season, episode) {
+  var type = mediaType === "tv" ? "tv" : "movie";
+  var requestedSeason = Math.max(1, Number(season || 1));
+  var requestedEpisode = Math.max(1, Number(episode || 1));
 
   console.log(
     "[MovieBox] Request tmdbId=" +
@@ -1060,177 +870,41 @@ function getStreams(
     type +
     (
       type === "tv"
-        ? " S" +
-          requestedSeason +
-          "E" +
-          requestedEpisode
+        ? " S" + requestedSeason + "E" + requestedEpisode
         : ""
     )
   );
 
   var info;
-  var searchResult;
-  var selectedItem;
 
-  var work =
-    getTmdbInfo(
-      tmdbId,
-      type
-    )
+  var work = getTmdbInfo(tmdbId, type)
     .then(function(value) {
       info = value;
 
-      if (!info.title) {
-        throw new Error(
-          "TMDB title is empty"
-        );
-      }
-
-      return raceSearchHosts(
-        info,
-        type
-      );
-    })
-    .then(function(result) {
-      if (!result) {
-        throw new Error(
-          "MovieBox search returned no confident match"
-        );
-      }
-
-      searchResult = result;
-      selectedItem =
-        Object.assign(
-          {},
-          result.item
-        );
-
       /*
-       * Search results normally include detailPath. Only spend time on a
-       * detail race when it is absent, because VUEO only needs playback data.
+       * Current MovieBox web pages use TMDB IDs directly and their primary
+       * "Zen" server is VideoEasy. This avoids the H5 search bottleneck.
        */
-      if (
-        selectedItem.detailPath ||
-        selectedItem.detail_path
-      ) {
-        return null;
-      }
-
-      return raceDetailHosts(
-        selectedItem.subjectId,
-        result.host
-      );
-    })
-    .then(function(detailResult) {
-      if (
-        detailResult &&
-        detailResult.subject
-      ) {
-        selectedItem =
-          Object.assign(
-            {},
-            selectedItem,
-            detailResult.subject
-          );
-
-        if (detailResult.host) {
-          preferredWebHost =
-            detailResult.host;
-        }
-      }
-
-      var subjectId =
-        String(
-          selectedItem &&
-          selectedItem.subjectId ||
-          ""
-        ).trim();
-
-      if (!subjectId) {
-        throw new Error(
-          "MovieBox subjectId is missing"
-        );
-      }
-
-      return racePlayHosts(
-        selectedItem,
-        subjectId,
+      return resolveCurrentMovieBoxPlayer(
+        tmdbId,
         type,
         requestedSeason,
-        requestedEpisode,
-        searchResult.host
-      ).then(function(playResult) {
-        return {
-          subjectId: subjectId,
-          playResult: playResult
-        };
-      });
-    })
-    .then(function(state) {
-      if (
-        !state.playResult ||
-        !state.playResult.streams ||
-        !state.playResult.streams.length
-      ) {
-        throw new Error(
-          "MovieBox returned no playable streams"
-        );
-      }
-
-      var captionSeed =
-        state.playResult.streams.find(
-          function(source) {
-            return (
-              source &&
-              source.id &&
-              source.format
-            );
-          }
-        );
-
-      if (!captionSeed) {
-        return {
-          playResult: state.playResult,
-          subtitles: []
-        };
-      }
-
-      return raceCaptionHosts(
-        state.subjectId,
-        captionSeed.id,
-        captionSeed.format,
-        state.playResult.host
-      )
-      .catch(function() {
-        return [];
-      })
-      .then(function(captions) {
-        return {
-          playResult: state.playResult,
-          subtitles:
-            buildSubtitles(captions)
-        };
-      });
-    })
-    .then(function(state) {
-      var streams =
-        buildStreams(
-          state.playResult,
-          state.subtitles,
-          info,
-          type,
-          requestedSeason,
-          requestedEpisode
-        );
-
-      console.log(
-        "[MovieBox] Direct streams found=" +
-        streams.length +
-        " subtitles=" +
-        state.subtitles.length
+        requestedEpisode
       );
+    })
+    .then(function(streams) {
+      if (streams && streams.length) {
+        return streams;
+      }
 
-      return streams;
+      console.log("[MovieBox] Current player empty, falling back to H5 API");
+
+      return resolveH5Fallback(
+        info,
+        type,
+        requestedSeason,
+        requestedEpisode
+      );
     });
 
   return withSoftTimeout(
@@ -1240,14 +914,8 @@ function getStreams(
   ).catch(function(error) {
     console.error(
       "[MovieBox] " +
-      (
-        error &&
-        error.message
-          ? error.message
-          : String(error)
-      )
+      (error && error.message ? error.message : String(error))
     );
-
     return [];
   });
 }
