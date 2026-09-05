@@ -1,6 +1,6 @@
 {
   "name": "VUEO Stock",
-  "version": "1.7.1",
+  "version": "1.7.2",
   "scrapers": [
     {
       "id": "kisskh",
@@ -362,7 +362,7 @@
       "id": "pencurimovie",
       "name": "PencuriMovie",
       "description": "Malaysia and Indonesia movie and TV streams with multi-server playback",
-      "version": "1.2.1",
+      "version": "1.2.2",
       "author": "Luckez",
       "supportedTypes": [
         "movie",
@@ -383,14 +383,14 @@
       ],
       "disabledPlatforms": [],
       "supportsExternalPlayer": true,
-      "notes": "Adds direct movie/series permalink resolution before site search and reuses detail HTML. Known browser-player hosts go straight to VUEO native WebView, avoiding match-confidence failures and unnecessary pre-WebView requests.",
+      "notes": "Native WebView playback headers are sanitised for Media3 playback while keeping Cookie and the exact player-mirror Referer. Direct media captures are preferred over intermediate /sora/ URLs.",
       "runtimeTimeoutMs": 20000
     },
     {
       "id": "msm21",
       "name": "MSM21",
       "description": "Malay subtitle movie and TV streams using Zeta player multi-server extraction",
-      "version": "1.1.1",
+      "version": "1.1.2",
       "author": "Luckez",
       "supportedTypes": [
         "movie",
@@ -411,7 +411,7 @@
       ],
       "disabledPlatforms": [],
       "supportsExternalPlayer": true,
-      "notes": "Optimised native WebView path for MSM21. Direct permalink pages are reused, known browser players bypass HTTP redirect probing, native WebView runs up to 13 seconds, and Supergirl/Silo style pages avoid wasting the 20 second budget.",
+      "notes": "Native WebView playback headers now mirror Cloudstream MSM21: unsafe transport headers are removed, Cookie is preserved, and Referer is forced to the player mirror URL. Direct m3u8/mp4/m4v captures are preferred over /sora/ intermediates.",
       "runtimeTimeoutMs": 20000
     }
   ]

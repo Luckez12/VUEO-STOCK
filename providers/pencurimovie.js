@@ -1543,6 +1543,56 @@ function nativeWebViewAvailable() {
   );
 }
 
+
+function sanitizeNativePlaybackHeaders(rawHeaders, mirrorUrl) {
+  var blocked = {
+    "host": true,
+    "connection": true,
+    "accept-encoding": true,
+    "range": true,
+    "origin": true
+  };
+
+  var headers = {};
+  var input =
+    rawHeaders && typeof rawHeaders === "object"
+      ? rawHeaders
+      : {};
+
+  Object.keys(input).forEach(function(key) {
+    var lower = String(key).toLowerCase();
+    if (blocked[lower]) return;
+    headers[String(key)] = String(input[key]);
+  });
+
+  headers["User-Agent"] =
+    headers["User-Agent"] ||
+    headers["user-agent"] ||
+    USER_AGENT;
+  headers["Accept"] =
+    headers["Accept"] ||
+    headers["accept"] ||
+    "*/*";
+
+  /*
+   * Cloudstream sets ExtractorLink.referer to the player mirror URL even when
+   * the intercepted WebView request carried another transient Referer.
+   */
+  delete headers["referer"];
+  headers["Referer"] = mirrorUrl;
+
+  return headers;
+}
+
+function nativeTransportScore(url) {
+  var value = String(url || "").toLowerCase();
+  if (value.indexOf(".m3u8") !== -1) return 30;
+  if (value.indexOf(".mp4") !== -1) return 20;
+  if (value.indexOf(".m4v") !== -1) return 20;
+  if (value.indexOf("/sora/") !== -1) return 10;
+  return 0;
+}
+
 function resolveWithNativeWebView(url, referer, label) {
   if (!nativeWebViewAvailable()) {
     return Promise.resolve(emptyResolved());
@@ -1592,10 +1642,10 @@ function resolveWithNativeWebView(url, referer, label) {
       .map(function(item) {
         if (!item || !item.url) return null;
 
-        var headers =
-          item.headers && typeof item.headers === "object"
-            ? item.headers
-            : {};
+        var headers = sanitizeNativePlaybackHeaders(
+          item.headers,
+          absolute
+        );
 
         return {
           url: String(item.url),
@@ -1603,11 +1653,7 @@ function resolveWithNativeWebView(url, referer, label) {
             item.url,
             item.label || label || PROVIDER_NAME
           ),
-          referer:
-            headers.Referer ||
-            headers.referer ||
-            referer ||
-            absolute,
+          referer: absolute,
           headers: headers,
           serverLabel:
             label ||
@@ -1615,7 +1661,17 @@ function resolveWithNativeWebView(url, referer, label) {
             "WebView"
         };
       })
-      .filter(Boolean);
+      .filter(Boolean)
+      .sort(function(a, b) {
+        var transport =
+          nativeTransportScore(b.url) -
+          nativeTransportScore(a.url);
+        if (transport !== 0) return transport;
+
+        return String(a.quality || "").localeCompare(
+          String(b.quality || "")
+        );
+      });
 
     console.log(
       "[" + PROVIDER_NAME + "] native WebView streams=" + streams.length
