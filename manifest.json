@@ -1,6 +1,6 @@
 {
   "name": "VUEO Stock",
-  "version": "1.8.3",
+  "version": "1.9.0",
   "scrapers": [
     {
       "id": "kisskh",
@@ -127,15 +127,30 @@
     {
       "id": "moviebox",
       "name": "MovieBox",
-      "description": "Movie and TV stream provider",
-      "version": "1.0.0",
+      "description": "Movie and TV streams from the current MovieBox H5 web API mirror pool",
+      "version": "2.0.0",
       "author": "Luckez",
       "supportedTypes": [
         "movie",
         "tv"
       ],
       "filename": "providers/moviebox.js",
-      "enabled": true
+      "enabled": true,
+      "limited": false,
+      "formats": [
+        "mp4",
+        "m3u8"
+      ],
+      "logo": "https://www.google.com/s2/favicons?domain=moviebox.ph&sz=128",
+      "contentLanguage": [
+        "en",
+        "ms",
+        "id"
+      ],
+      "disabledPlatforms": [],
+      "supportsExternalPlayer": true,
+      "runtimeTimeoutMs": 20000,
+      "notes": "Full rewrite based on the supplied current Cloudstream MovieBox provider. Uses the H5 web API, races moviebox.ph/moviebox.pk/moviebox.ng/filmboom.top, matches TMDB title/year/type, races direct playback hosts, uses the correct MovieBox play referer and fetches English/Malay/Indonesian captions."
     },
     {
       "id": "moviesmod",
