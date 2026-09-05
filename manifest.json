@@ -1,6 +1,6 @@
 {
   "name": "VUEO Stock",
-  "version": "1.9.3",
+  "version": "1.9.4",
   "scrapers": [
     {
       "id": "kisskh",
@@ -128,7 +128,7 @@
       "id": "moviebox",
       "name": "MovieBox",
       "description": "Movie and TV streams from the current MovieBox H5 web API mirror pool",
-      "version": "2.3.0",
+      "version": "2.4.0",
       "author": "Luckez",
       "supportedTypes": [
         "movie",
@@ -150,7 +150,7 @@
       "disabledPlatforms": [],
       "supportsExternalPlayer": true,
       "runtimeTimeoutMs": 20000,
-      "notes": "Current MovieBox watch-page resolver. Opens moviebox.asia/watch directly by TMDB ID so the embedded player receives the real MovieBox page context. Cycles Change Server while capturing media. Cloudstream H5 mirrors remain a parallel fallback."
+      "notes": "Direct current MovieBox watch-page resolver. Removes TMDB and H5 search from the critical path because MovieBox watch URLs already use the TMDB ID passed by VUEO. Movies open /watch/movie/<id>/ directly. TV opens /watch/tv/<id>/ and selects season/episode through native WebView interaction."
     },
     {
       "id": "moviesmod",

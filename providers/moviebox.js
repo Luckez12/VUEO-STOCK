@@ -24,7 +24,7 @@ var COMMON_HEADERS = {
 };
 
 var PROVIDER_BUDGET_MS = 19000;
-var WEBVIEW_BUDGET_MS = 14500;
+var WEBVIEW_BUDGET_MS = 17500;
 var SEARCH_COLLECT_MS = 4300;
 var DETAIL_RACE_MS = 3400;
 var PLAY_RACE_MS = 5200;
@@ -1269,10 +1269,7 @@ function buildMovieBoxWatchUrl(
       MOVIEBOX_WEB +
       "/watch/tv/" +
       encodeURIComponent(tmdbId) +
-      "/?se=" +
-      encodeURIComponent(Number(season || 1)) +
-      "&ep=" +
-      encodeURIComponent(Number(episode || 1))
+      "/"
     );
   }
 
@@ -1346,19 +1343,16 @@ function resolveMovieBoxWebsite(
       interactionTexts:
         interactions,
       clickDelaysMs: [
-        500,
-        1050,
-        1650,
-        2350,
-        3150,
-        4050,
-        5050,
-        6200,
-        7500,
+        700,
+        1500,
+        2600,
+        3900,
+        5400,
+        7100,
         9000,
-        10800,
-        12800,
-        14300
+        11100,
+        13400,
+        15700
       ],
       match: [
         ".m3u8",
@@ -1527,9 +1521,19 @@ function getStreams(
       Number(episode || 1)
     );
 
+  var id =
+    String(tmdbId || "").trim();
+
+  if (!id) {
+    console.error(
+      "[MovieBox] TMDB ID is missing"
+    );
+    return Promise.resolve([]);
+  }
+
   console.log(
-    "[MovieBox] Request tmdbId=" +
-    tmdbId +
+    "[MovieBox] Direct request tmdbId=" +
+    id +
     " type=" +
     type +
     (
@@ -1542,47 +1546,18 @@ function getStreams(
     )
   );
 
-  var work =
-    getTmdbInfo(
-      tmdbId,
-      type
-    )
-      .then(function(info) {
-        if (!info.title) {
-          throw new Error(
-            "TMDB title is empty"
-          );
-        }
+  var info = {
+    title: PROVIDER_NAME
+  };
 
-        /*
-         * Both are real MovieBox paths:
-         *
-         * 1. The current public MovieBox website itself.
-         * 2. The H5 API path used by the supplied Cloudstream provider.
-         *
-         * Run them concurrently. A blocked H5 API can no longer consume the
-         * entire provider timeout before the website is attempted, and a slow
-         * website cannot prevent the structured API from winning.
-         */
-        return firstNonEmptyStreams(
-          [
-            resolveMovieBoxWebsite(
-              tmdbId,
-              info,
-              type,
-              requestedSeason,
-              requestedEpisode
-            ),
-            resolveH5(
-              info,
-              type,
-              requestedSeason,
-              requestedEpisode
-            )
-          ],
-          18000
-        );
-      });
+  var work =
+    resolveMovieBoxWebsite(
+      id,
+      info,
+      type,
+      requestedSeason,
+      requestedEpisode
+    );
 
   return withSoftTimeout(
     work,
