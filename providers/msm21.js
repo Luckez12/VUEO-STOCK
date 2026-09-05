@@ -910,7 +910,11 @@ function unescapeScriptText(value) {
 }
 
 function isDirectMedia(url) {
-  return /\.(?:m3u8|mp4)(?:$|[?#])/i.test(String(url || ""));
+  var value = String(url || "").toLowerCase();
+  return (
+    value.indexOf("/sora/") !== -1 ||
+    /\.(?:m3u8|mp4|m4v)(?:$|[?#])/i.test(value)
+  );
 }
 
 function inferQuality(url, label) {
@@ -998,12 +1002,13 @@ function extractDirectMedia(text, baseUrl) {
     });
   }
 
-  var absoluteRegex = /https?:\/\/[^"'<>\\\s]+?\.(?:m3u8|mp4)(?:\?[^"'<>\\\s]*)?/gi;
+  var absoluteRegex =
+    /https?:\/\/[^"'<>\\\s]+?(?:\.(?:m3u8|mp4|m4v)(?:\?[^"'<>\\\s]*)?|\/sora\/[^"'<>\\\s]*)/gi;
   var absolute;
   while ((absolute = absoluteRegex.exec(source))) add(absolute[0], "");
 
   var keyedRegex =
-    /(?:file|src|source|url)\s*[:=]\s*(["'])([^"']+\.(?:m3u8|mp4)(?:\?[^"']*)?)\1/gi;
+    /(?:file|src|source|url)\s*[:=]\s*(["'])([^"']+(?:\.(?:m3u8|mp4|m4v)(?:\?[^"']*)?|\/sora\/[^"']*))\1/gi;
   var keyed;
   while ((keyed = keyedRegex.exec(source))) add(keyed[2], keyed[0]);
 
@@ -1054,9 +1059,12 @@ function extractBrowserPlayerMedia(text, baseUrl) {
   }
 
   var patterns = [
-    /\b(?:file|src|source|url|video_url|videoUrl|hls_url|hlsUrl)\s*[:=]\s*(["'])(.*?)\1/gi,
+    /\b(?:file|src|source|url|video_url|videoUrl|hls_url|hlsUrl|currentSrc)\s*[:=]\s*(["'])(.*?)\1/gi,
     /\bloadSource\s*\(\s*(["'])(.*?)\1\s*\)/gi,
-    /\bsetAttribute\s*\(\s*(["'])src\1\s*,\s*(["'])(.*?)\2\s*\)/gi
+    /\bsetAttribute\s*\(\s*(["'])src\1\s*,\s*(["'])(.*?)\2\s*\)/gi,
+    /\bfetch\s*\(\s*(["'])(.*?)\1/gi,
+    /\bnew\s+Request\s*\(\s*(["'])(.*?)\1/gi,
+    /\.open\s*\(\s*(["'])(?:GET|POST)\1\s*,\s*(["'])(.*?)\2/gi
   ];
 
   patterns.forEach(function(regex) {
@@ -1077,13 +1085,15 @@ function extractBrowserPlayerMedia(text, baseUrl) {
     var decoded = decodeBase64Loose(
       String(encoded[2] || "").replace(/-/g, "+").replace(/_/g, "/")
     );
-    if (!decoded || !/(?:https?:|m3u8|mp4|file|source)/i.test(decoded)) continue;
+    if (!decoded || !/(?:https?:|\/sora\/|m3u8|mp4|m4v|file|source|fetch|xhr)/i.test(decoded)) continue;
 
     extractDirectMedia(decoded, baseUrl).forEach(function(item) {
       add(item.url, item.quality);
     });
 
-    var inner = decoded.match(/https?:\/\/[^\s"'<>]+?\.(?:m3u8|mp4)(?:\?[^\s"'<>]*)?/gi) || [];
+    var inner = decoded.match(
+      /https?:\/\/[^\s"'<>]+?(?:\.(?:m3u8|mp4|m4v)(?:\?[^\s"'<>]*)?|\/sora\/[^\s"'<>]*)/gi
+    ) || [];
     inner.forEach(function(url) { add(url, ""); });
   }
 
@@ -1837,29 +1847,126 @@ function extractVoe(url, referer) {
   });
 }
 
+
+function extractExternalScriptUrls(text, baseUrl) {
+  var source = String(text || "");
+  var output = [];
+  var seen = Object.create(null);
+  var regex = /<script\b[^>]*\bsrc\s*=\s*(["'])(.*?)\1[^>]*>/gi;
+  var match;
+  var baseHost = hostOf(baseUrl);
+
+  while ((match = regex.exec(source))) {
+    var url = safeUrl(match[2], baseUrl);
+    if (!url || seen[url]) continue;
+
+    var host = hostOf(url);
+    var lower = url.toLowerCase();
+
+    /*
+     * Keep the probe bounded. Same-host player scripts are highest value.
+     * Also allow obvious player bundles.
+     */
+    if (
+      host !== baseHost &&
+      lower.indexOf("player") === -1 &&
+      lower.indexOf("video") === -1 &&
+      lower.indexOf("app.") === -1 &&
+      lower.indexOf("bundle") === -1
+    ) {
+      continue;
+    }
+
+    seen[url] = true;
+    output.push(url);
+    if (output.length >= 3) break;
+  }
+
+  return output;
+}
+
+function scanExternalPlayerScripts(html, pageUrl, referer) {
+  var scripts = extractExternalScriptUrls(html, pageUrl);
+  if (!scripts.length) return Promise.resolve(emptyResolved());
+
+  return firstNonEmpty(
+    scripts.map(function(scriptUrl) {
+      return requestRaw(
+        scriptUrl,
+        {
+          headers: {
+            "Referer": pageUrl,
+            "Accept": "*/*"
+          },
+          redirect: "follow"
+        },
+        1100,
+        "MSM21 player script " + scriptUrl
+      ).then(function(script) {
+        var resolved = resolvedFromText(
+          script.text,
+          script.url || scriptUrl,
+          {
+            "Referer": pageUrl
+          }
+        );
+
+        if (resolved.streams.length) {
+          console.log(
+            "[MSM21] script stream hit host=" + hostOf(script.url || scriptUrl)
+          );
+        }
+        return resolved;
+      }).catch(function() {
+        return emptyResolved();
+      });
+    }),
+    1350
+  );
+}
+
 function extractGenericHost(url, referer, depth) {
   return requestRaw(url, {
     headers: referer ? { "Referer": referer } : {},
     redirect: "follow"
-  }, 2300, "Generic extractor " + url).then(function(result) {
+  }, 2100, "Generic extractor " + url).then(function(result) {
+    var finalUrl = result.url || url;
     var resolved = resolvedFromText(
       result.text,
-      result.url || url,
+      finalUrl,
       referer ? { "Referer": referer } : {}
     );
 
-    if (resolved.streams.length || Number(depth || 0) >= 1) return resolved;
+    if (resolved.streams.length) return resolved;
 
-    var nested = extractIframes(result.text, result.url || url).slice(0, 2);
-    if (!nested.length) return resolved;
+    /*
+     * Cloudstream's WebView hook sees fetch/XHR/media requests produced by
+     * external player bundles. Scan those bundles before trying nested iframes.
+     */
+    return scanExternalPlayerScripts(result.text, finalUrl, referer)
+      .then(function(scriptResult) {
+        mergeResolved(resolved, scriptResult);
+        if (resolved.streams.length || Number(depth || 0) >= 1) return resolved;
 
-    return Promise.all(nested.map(function(child) {
-      return loadExtractorEquivalent(child, result.url || url, Number(depth || 0) + 1)
-        .catch(function() { return emptyResolved(); });
-    })).then(function(children) {
-      children.forEach(function(child) { mergeResolved(resolved, child); });
-      return resolved;
-    });
+        var nested = extractIframes(result.text, finalUrl).slice(0, 2);
+        if (!nested.length) return resolved;
+
+        return firstNonEmpty(
+          nested.map(function(child) {
+            return loadExtractorEquivalent(
+              child,
+              finalUrl,
+              Number(depth || 0) + 1
+            ).catch(function() {
+              return emptyResolved();
+            });
+          }),
+          1700
+        ).then(function(child) {
+          mergeResolved(resolved, child);
+          return resolved;
+        });
+      });
   });
 }
 
@@ -2003,54 +2110,46 @@ function resolvePlayback(html, pageUrl) {
     );
   }
 
-  /*
-   * VUEO has no Android WebView. The live page often already contains a loaded
-   * Full HD/static player, so try that before the Zeta options that Cloudstream
-   * would otherwise hand to its WebView probe.
-   */
-  var staticPromise = staticMirrors.length
-    ? firstNonEmpty(
-        staticMirrors.slice(0, 3).map(function(mirror) {
-          return resolveMirror(mirror, pageUrl);
-        }),
-        2500
-      )
-    : Promise.resolve({ streams: [], subtitles: [] });
+  var fast = options
+    .filter(isFastOption)
+    .sort(function(a, b) { return fastPriority(a) - fastPriority(b); })
+    .slice(0, 8);
 
-  return staticPromise.then(function(staticResult) {
-    if (staticResult.streams && staticResult.streams.length) return staticResult;
+  var preferredFallback = options
+    .slice()
+    .sort(function(a, b) { return fallbackPriority(a) - fallbackPriority(b); })
+    .slice(0, 6);
 
-    if (!options.length) {
-      return { streams: [], subtitles: [] };
-    }
+  var candidates = [];
+  var optionSeen = Object.create(null);
 
-    var fast = options
-      .filter(isFastOption)
-      .sort(function(a, b) { return fastPriority(a) - fastPriority(b); })
-      .slice(0, 8);
-
-    var preferredFallback = options
-      .slice()
-      .sort(function(a, b) { return fallbackPriority(a) - fallbackPriority(b); })
-      .slice(0, 6);
-
-    var candidates = [];
-    var seen = Object.create(null);
-
-    fast.concat(preferredFallback).forEach(function(option) {
-      var key = [option.post, option.nume, option.type].join("|");
-      if (seen[key]) return;
-      seen[key] = true;
-      candidates.push(option);
-    });
-
-    return firstNonEmpty(
-      candidates.map(function(option) {
-        return resolveOption(option, pageUrl);
-      }),
-      3800
-    );
+  fast.concat(preferredFallback).forEach(function(option) {
+    var key = [option.post, option.nume, option.type].join("|");
+    if (optionSeen[key]) return;
+    optionSeen[key] = true;
+    candidates.push(option);
   });
+
+  var tasks = [];
+
+  staticMirrors.slice(0, 3).forEach(function(mirror) {
+    tasks.push(resolveMirror(mirror, pageUrl));
+  });
+
+  candidates.forEach(function(option) {
+    tasks.push(resolveOption(option, pageUrl));
+  });
+
+  if (!tasks.length) {
+    return Promise.resolve({ streams: [], subtitles: [] });
+  }
+
+  /*
+   * Cloudstream starts several native hosts concurrently. Doing the same here
+   * prevents a dead BrowserPlayer mirror from consuming the whole provider
+   * budget before another server is tried.
+   */
+  return firstNonEmpty(tasks, 4700);
 }
 
 function buildStreams(resolved, info, mediaType, season, episode) {
@@ -2170,7 +2269,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
       return streams;
     });
 
-  return withSoftTimeout(work, 8200, "MSM21 provider")
+  return withSoftTimeout(work, 7900, "MSM21 provider")
     .catch(function(error) {
       console.error(
         "[MSM21] " +

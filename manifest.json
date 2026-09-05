@@ -1,6 +1,6 @@
 {
   "name": "VUEO Stock",
-  "version": "1.6.2",
+  "version": "1.6.3",
   "scrapers": [
     {
       "id": "kisskh",
@@ -389,7 +389,7 @@
       "id": "msm21",
       "name": "MSM21",
       "description": "Malay subtitle movie and TV streams using Zeta player multi-server extraction",
-      "version": "1.0.2",
+      "version": "1.0.3",
       "author": "Luckez",
       "supportedTypes": [
         "movie",
@@ -410,7 +410,7 @@
       ],
       "disabledPlatforms": [],
       "supportsExternalPlayer": true,
-      "notes": "MSM21 direct-permalink fast path with static Full HD player priority. Adds PlayerX-style JavaScript, packed-script and base64 media discovery before falling back to Zeta AJAX server extraction."
+      "notes": "MSM21 fast resolver with a closer HTTP equivalent of the Cloudstream WebView probe. Captures /sora/, M3U8, MP4 and M4V URLs from player HTML, fetch/XHR hints and external player scripts. Static mirrors and Zeta server options are raced in parallel."
     }
   ]
 }
