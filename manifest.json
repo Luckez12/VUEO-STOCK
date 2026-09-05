@@ -1,6 +1,6 @@
 {
   "name": "VUEO Stock",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "scrapers": [
     {
       "id": "kisskh",
@@ -384,6 +384,33 @@
       "disabledPlatforms": [],
       "supportsExternalPlayer": true,
       "notes": "Cloudstream-style PencuriMovie flow: exact movieplay iframe selection, manual redirect resolution, host-specific extractor dispatch, packed JWPlayer extraction, subtitles, movies and TV episodes."
+    },
+    {
+      "id": "msm21",
+      "name": "MSM21",
+      "description": "Malay subtitle movie and TV streams using Zeta player multi-server extraction",
+      "version": "1.0.0",
+      "author": "Luckez",
+      "supportedTypes": [
+        "movie",
+        "tv"
+      ],
+      "filename": "providers/msm21.js",
+      "enabled": true,
+      "limited": false,
+      "formats": [
+        "m3u8",
+        "mp4"
+      ],
+      "logo": "https://www.google.com/s2/favicons?domain=pencurimoviesubmalay26.site&sz=128",
+      "contentLanguage": [
+        "ms",
+        "en",
+        "id"
+      ],
+      "disabledPlatforms": [],
+      "supportsExternalPlayer": true,
+      "notes": "Ported from the supplied Cloudstream MSM21 provider. Uses display-item search, episodes-list season/episode selection, zeta_player_ajax mirrors, and native extractor paths for Hglink/StreamWish, Dsvplay/Dood, Bysesukior, MixDropTop, plus compatible generic fallbacks."
     }
   ]
 }
