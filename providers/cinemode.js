@@ -18,9 +18,7 @@ var BLOCKED_PARTS = [
   "googlesyndication",
   "googleadservices",
   "googletagmanager",
-  "/ads/",
-  "/vast",
-  "effectivecpmnetwork"
+  "/vast"
 ];
 
 function inferQuality(url, label) {
@@ -133,20 +131,36 @@ function getStreams(tmdbId, mediaType, season, episode) {
   return globalThis.webviewResolve(pageUrl, {
     referer: BASE_URL + "/",
     directLoad: true,
-    timeoutMs: 17000,
-    finishAfterFirstMs: 850,
+    timeoutMs: 17500,
+    finishAfterFirstMs: 700,
+    suppressPopups: true,
+    lockMainFrameHost: true,
+    interactionTexts: [
+      "watch now",
+      "start watching",
+      "watch",
+      "play now",
+      "play",
+      "continue",
+      "skip ad",
+      "skip",
+      "close ad",
+      "close"
+    ],
     viewportWidth: 1080,
     viewportHeight: 1080,
     clickX: 540,
     clickY: 540,
     clickDelaysMs: [
-      900,
-      1800,
-      3200,
-      5000,
-      7500,
-      10500,
-      13500
+      700,
+      1400,
+      2400,
+      3600,
+      5200,
+      7600,
+      10300,
+      13200,
+      15500
     ],
     match: MATCH_PARTS,
     blocked: BLOCKED_PARTS,
