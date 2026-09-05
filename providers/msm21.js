@@ -400,11 +400,32 @@ function isDirectPageMatch(result, info, mediaType) {
 
   var url = String(result.url || "");
   var lowerUrl = url.toLowerCase();
+  var body = String(result.text || "");
 
   if (mediaType === "movie" && lowerUrl.indexOf("/movies/") === -1) return false;
   if (mediaType === "tv" && lowerUrl.indexOf("/tvshows/") === -1) return false;
 
-  var identity = extractDetailIdentity(result.text);
+  /*
+   * Canonical slug URLs are generated from TMDB title/year. If the site returned
+   * a real detail page, do not burn several more seconds re-searching WordPress.
+   */
+  if (
+    /(?:page not found|404 not found|nothing found)/i.test(body) ||
+    body.length < 300
+  ) {
+    return false;
+  }
+
+  var expectedSlug = slugifyTitle(info.title);
+  var pathSlug = "";
+  try {
+    var path = new URL(url).pathname.split("/").filter(Boolean);
+    pathSlug = path.length ? path[path.length - 1] : "";
+  } catch (_) {}
+
+  if (expectedSlug && pathSlug.indexOf(expectedSlug) === 0) return true;
+
+  var identity = extractDetailIdentity(body);
   if (!identity.title) return false;
 
   var score = Math.max(
@@ -412,19 +433,8 @@ function isDirectPageMatch(result, info, mediaType) {
     titleScore(identity.title, info.originalTitle)
   );
 
-  if (score < 58) return false;
-
-  if (info.year && identity.year && String(info.year) !== String(identity.year)) {
-    return false;
-  }
-
-  if (
-    mediaType === "tv" &&
-    result.text.indexOf("episodes-list") === -1 &&
-    lowerUrl.indexOf("/tvshows/") === -1
-  ) {
-    return false;
-  }
+  if (score < 52) return false;
+  if (info.year && identity.year && String(info.year) !== String(identity.year)) return false;
 
   return true;
 }
@@ -475,7 +485,7 @@ function tryDirectTitlePage(info, mediaType) {
     if (index >= candidates.length) return Promise.resolve(null);
 
     var url = candidates[index];
-    var timeoutMs = index === 0 ? 1900 : 1200;
+    var timeoutMs = index === 0 ? 1700 : 850;
 
     return requestText(
       url,
@@ -670,10 +680,11 @@ function fastPriority(option) {
 
 function fallbackPriority(option) {
   var value = String(option && option.label || "").toLowerCase();
-  if (value.indexOf("abyss") !== -1) return 0;
-  if (value.indexOf("veev") !== -1) return 1;
-  if (value.indexOf("player") !== -1 || value.indexOf("ezpla") !== -1) return 2;
-  return 3;
+  if (value.indexOf("full hd") !== -1 || value.indexOf("server full") !== -1) return 0;
+  if (value.indexOf("abyss") !== -1) return 1;
+  if (value.indexOf("veev") !== -1) return 2;
+  if (value.indexOf("player") !== -1 || value.indexOf("ezpla") !== -1 || value.indexOf("playe") !== -1) return 3;
+  return 4;
 }
 
 function cacheKey(option, pageUrl) {
@@ -808,13 +819,34 @@ function collectStaticMirrors(html, pageUrl) {
     mirrors.push({ url: url, label: label || "MSM21" });
   }
 
+  var source = String(html || "");
+
   var tagRegex = /<(?:iframe|video|source)\b[^>]*>/gi;
   var match;
-  while ((match = tagRegex.exec(String(html || "")))) {
+  while ((match = tagRegex.exec(source))) {
     add(
       getAttr(match[0], "data-src") || getAttr(match[0], "src"),
-      "MSM21"
+      "MSM21 Static"
     );
+  }
+
+  /*
+   * Some current movie pages expose the loaded Full HD player as a normal
+   * anchor rather than only as a player option.
+   */
+  var anchorRegex = /<a\b[^>]*href\s*=\s*(["'])(.*?)\1[^>]*>([\s\S]*?)<\/a>/gi;
+  var anchor;
+  while ((anchor = anchorRegex.exec(source))) {
+    var href = anchor[2];
+    var label = stripTags(anchor[3]);
+    var lower = String(href || "").toLowerCase();
+
+    if (
+      /(?:palankyurok|player|embed|abyss|ezpla|seekp|p2pst|upns)/i.test(lower) ||
+      /(?:full\s*hd|server\s*full|^\s*hd\s*$)/i.test(label)
+    ) {
+      add(href, label || "MSM21 Full HD");
+    }
   }
 
   return mirrors;
@@ -867,8 +899,12 @@ function firstNonEmpty(tasks, timeoutMs) {
 
 function unescapeScriptText(value) {
   return decodeHtml(String(value || ""))
+    .replace(/\\u003a/gi, ":")
+    .replace(/\\x3a/gi, ":")
     .replace(/\\u002f/gi, "/")
     .replace(/\\x2f/gi, "/")
+    .replace(/\\u0026/gi, "&")
+    .replace(/\\x26/gi, "&")
     .replace(/\\\//g, "/")
     .replace(/\\\\/g, "\\");
 }
@@ -980,9 +1016,88 @@ function extractDirectMedia(text, baseUrl) {
   return found;
 }
 
+
+function decodeBase64Loose(value) {
+  var raw = String(value || "").trim();
+  if (!raw) return "";
+
+  try {
+    if (typeof atob === "function") return atob(raw);
+  } catch (_) {}
+
+  try {
+    if (typeof Buffer !== "undefined") {
+      return Buffer.from(raw, "base64").toString("utf8");
+    }
+  } catch (_) {}
+
+  return "";
+}
+
+function extractBrowserPlayerMedia(text, baseUrl) {
+  var source = unpackPackedScripts(unescapeScriptText(text));
+  var found = [];
+  var seen = Object.create(null);
+
+  function add(raw, label) {
+    var value = unescapeScriptText(String(raw || "")).trim();
+    if (!value) return;
+
+    var url = safeUrl(value, baseUrl);
+    if (!url || seen[url] || !isDirectMedia(url)) return;
+
+    seen[url] = true;
+    found.push({
+      url: url,
+      quality: inferQuality(url, label || "")
+    });
+  }
+
+  var patterns = [
+    /\b(?:file|src|source|url|video_url|videoUrl|hls_url|hlsUrl)\s*[:=]\s*(["'])(.*?)\1/gi,
+    /\bloadSource\s*\(\s*(["'])(.*?)\1\s*\)/gi,
+    /\bsetAttribute\s*\(\s*(["'])src\1\s*,\s*(["'])(.*?)\2\s*\)/gi
+  ];
+
+  patterns.forEach(function(regex) {
+    var match;
+    while ((match = regex.exec(source))) {
+      add(match[match.length - 1], match[0]);
+    }
+  });
+
+  /*
+   * PlayerX/Abyss variants often keep the media URL inside atob() or a JSON
+   * blob. Decode likely base64 strings and rescan only when the decoded text
+   * actually looks like a URL/player config.
+   */
+  var base64Regex = /(?:atob\s*\(\s*)?(["'])([A-Za-z0-9+/_=-]{48,})\1\s*\)?/g;
+  var encoded;
+  while ((encoded = base64Regex.exec(source))) {
+    var decoded = decodeBase64Loose(
+      String(encoded[2] || "").replace(/-/g, "+").replace(/_/g, "/")
+    );
+    if (!decoded || !/(?:https?:|m3u8|mp4|file|source)/i.test(decoded)) continue;
+
+    extractDirectMedia(decoded, baseUrl).forEach(function(item) {
+      add(item.url, item.quality);
+    });
+
+    var inner = decoded.match(/https?:\/\/[^\s"'<>]+?\.(?:m3u8|mp4)(?:\?[^\s"'<>]*)?/gi) || [];
+    inner.forEach(function(url) { add(url, ""); });
+  }
+
+  return found;
+}
+
 function extractJwPlayerMedia(text, baseUrl) {
   var source = unpackPackedScripts(unescapeScriptText(text));
   var found = extractDirectMedia(source, baseUrl);
+  extractBrowserPlayerMedia(source, baseUrl).forEach(function(item) {
+    if (!found.some(function(existing) { return existing.url === item.url; })) {
+      found.push(item);
+    }
+  });
   var seen = {};
   found.forEach(function(item) { seen[item.url] = true; });
 
@@ -1761,6 +1876,14 @@ function extractorNameFor(url) {
   if (hostMatches(host, LULU_DOMAINS) || host.indexOf("luluvdo") !== -1 || host.indexOf("lulustream") !== -1) return "LuluStream";
   if (hostMatches(host, VOE_DOMAINS) || host === "voe.sx") return "Voe";
   if (host === "bysesukior.com" || host.slice(-16) === ".bysesukior.com") return "ByseSX";
+  if (
+    host.indexOf("palankyurok.com") !== -1 ||
+    host.indexOf("abyss") !== -1 ||
+    host.indexOf("ezpla") !== -1 ||
+    host.indexOf("seekp") !== -1 ||
+    host.indexOf("p2pst") !== -1 ||
+    host.indexOf("upns") !== -1
+  ) return "BrowserPlayer";
 
   return "Generic";
 }
@@ -1780,6 +1903,7 @@ function dispatchExtractor(url, referer, depth) {
   else if (name === "LuluStream") work = extractLulu(url, referer);
   else if (name === "Voe") work = extractVoe(url, referer);
   else if (name === "ByseSX") work = extractGenericHost(url, referer, depth || 0);
+  else if (name === "BrowserPlayer") work = extractGenericHost(url, referer, depth || 0);
   else work = extractGenericHost(url, referer, depth || 0);
 
   return Promise.resolve(work).then(function(resolved) {
@@ -1865,44 +1989,66 @@ function resolveOption(option, pageUrl) {
 
 function resolvePlayback(html, pageUrl) {
   var options = parsePlayerOptions(html);
+  var staticMirrors = collectStaticMirrors(html, pageUrl);
 
-  if (!options.length) {
-    var staticMirrors = collectStaticMirrors(html, pageUrl);
-    if (!staticMirrors.length) {
-      throw new Error("MSM21 player options not found");
-    }
+  console.log(
+    "[MSM21] options=" +
+    options.map(function(option) { return option.label; }).join(" | ")
+  );
 
-    return firstNonEmpty(
-      staticMirrors.slice(0, 4).map(function(mirror) {
-        return resolveMirror(mirror, pageUrl);
-      }),
-      3500
+  if (staticMirrors.length) {
+    console.log(
+      "[MSM21] static mirrors=" +
+      staticMirrors.map(function(mirror) { return hostOf(mirror.url); }).join(" | ")
     );
   }
 
-  var fast = options
-    .filter(isFastOption)
-    .sort(function(a, b) { return fastPriority(a) - fastPriority(b); })
-    .slice(0, 8);
-
-  var fastPromise = fast.length
+  /*
+   * VUEO has no Android WebView. The live page often already contains a loaded
+   * Full HD/static player, so try that before the Zeta options that Cloudstream
+   * would otherwise hand to its WebView probe.
+   */
+  var staticPromise = staticMirrors.length
     ? firstNonEmpty(
-        fast.map(function(option) { return resolveOption(option, pageUrl); }),
-        4100
+        staticMirrors.slice(0, 3).map(function(mirror) {
+          return resolveMirror(mirror, pageUrl);
+        }),
+        2500
       )
     : Promise.resolve({ streams: [], subtitles: [] });
 
-  return fastPromise.then(function(result) {
-    if (result.streams && result.streams.length) return result;
+  return staticPromise.then(function(staticResult) {
+    if (staticResult.streams && staticResult.streams.length) return staticResult;
 
-    var fallback = options
+    if (!options.length) {
+      return { streams: [], subtitles: [] };
+    }
+
+    var fast = options
+      .filter(isFastOption)
+      .sort(function(a, b) { return fastPriority(a) - fastPriority(b); })
+      .slice(0, 8);
+
+    var preferredFallback = options
       .slice()
       .sort(function(a, b) { return fallbackPriority(a) - fallbackPriority(b); })
-      .slice(0, 4);
+      .slice(0, 6);
+
+    var candidates = [];
+    var seen = Object.create(null);
+
+    fast.concat(preferredFallback).forEach(function(option) {
+      var key = [option.post, option.nume, option.type].join("|");
+      if (seen[key]) return;
+      seen[key] = true;
+      candidates.push(option);
+    });
 
     return firstNonEmpty(
-      fallback.map(function(option) { return resolveOption(option, pageUrl); }),
-      3000
+      candidates.map(function(option) {
+        return resolveOption(option, pageUrl);
+      }),
+      3800
     );
   });
 }
@@ -2024,7 +2170,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
       return streams;
     });
 
-  return withSoftTimeout(work, 8600, "MSM21 provider")
+  return withSoftTimeout(work, 8200, "MSM21 provider")
     .catch(function(error) {
       console.error(
         "[MSM21] " +
