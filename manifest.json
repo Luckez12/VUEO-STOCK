@@ -1,6 +1,6 @@
 {
   "name": "VUEO Stock",
-  "version": "1.7.0",
+  "version": "1.7.1",
   "scrapers": [
     {
       "id": "kisskh",
@@ -362,7 +362,7 @@
       "id": "pencurimovie",
       "name": "PencuriMovie",
       "description": "Malaysia and Indonesia movie and TV streams with multi-server playback",
-      "version": "1.2.0",
+      "version": "1.2.1",
       "author": "Luckez",
       "supportedTypes": [
         "movie",
@@ -383,14 +383,14 @@
       ],
       "disabledPlatforms": [],
       "supportsExternalPlayer": true,
-      "notes": "Cloudstream-style movieplay extraction with VUEO native webviewResolve() fallback for browser-only player hosts, plus standard host-specific extractors. Provider runtime timeout is 20 seconds.",
+      "notes": "Adds direct movie/series permalink resolution before site search and reuses detail HTML. Known browser-player hosts go straight to VUEO native WebView, avoiding match-confidence failures and unnecessary pre-WebView requests.",
       "runtimeTimeoutMs": 20000
     },
     {
       "id": "msm21",
       "name": "MSM21",
       "description": "Malay subtitle movie and TV streams using Zeta player multi-server extraction",
-      "version": "1.1.0",
+      "version": "1.1.1",
       "author": "Luckez",
       "supportedTypes": [
         "movie",
@@ -411,7 +411,7 @@
       ],
       "disabledPlatforms": [],
       "supportsExternalPlayer": true,
-      "notes": "Uses VUEO native webviewResolve() for Abyss, PlayerX and browser-only players, while retaining direct permalink resolution, Zeta AJAX and standard host extractors. Provider runtime timeout is 20 seconds.",
+      "notes": "Optimised native WebView path for MSM21. Direct permalink pages are reused, known browser players bypass HTTP redirect probing, native WebView runs up to 13 seconds, and Supergirl/Silo style pages avoid wasting the 20 second budget.",
       "runtimeTimeoutMs": 20000
     }
   ]

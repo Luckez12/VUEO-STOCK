@@ -485,7 +485,7 @@ function tryDirectTitlePage(info, mediaType) {
     if (index >= candidates.length) return Promise.resolve(null);
 
     var url = candidates[index];
-    var timeoutMs = index === 0 ? 1700 : 850;
+    var timeoutMs = index === 0 ? 1400 : 700;
 
     return requestText(
       url,
@@ -1992,8 +1992,8 @@ function resolveWithNativeWebView(url, referer, label) {
 
   return globalThis.webviewResolve(absolute, {
     referer: referer || absolute,
-    timeoutMs: 14000,
-    finishAfterFirstMs: 700,
+    timeoutMs: 13000,
+    finishAfterFirstMs: 600,
     clickDelaysMs: [
       650,
       1300,
@@ -2159,6 +2159,21 @@ function loadExtractorEquivalent(url, referer, depth) {
       }],
       subtitles: []
     });
+  }
+
+  var directName = extractorNameFor(absolute);
+
+  /*
+   * Browser-only hosts are exactly why the native bridge exists. Do not spend
+   * another HTTP redirect timeout before opening the WebView.
+   */
+  if (directName === "BrowserPlayer") {
+    console.log("[MSM21] native direct host=" + hostOf(absolute));
+    return resolveWithNativeWebView(
+      absolute,
+      referer || absolute,
+      "BrowserPlayer"
+    );
   }
 
   return followRedirectCloudstream(absolute, referer).then(function(finalUrl) {
@@ -2333,7 +2348,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
         : requestText(
             detailUrl,
             { "Referer": currentBaseUrl + "/" },
-            1800
+            1400
           );
 
       return detailPromise.then(function(detail) {
@@ -2359,7 +2374,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
         return requestText(
           targetUrl,
           { "Referer": detail.url || detailUrl },
-          1700
+          1400
         ).then(function(episodePage) {
           updateBaseFromUrl(episodePage.url || targetUrl);
           return {
@@ -2385,7 +2400,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
       return streams;
     });
 
-  return withSoftTimeout(work, 19000, "MSM21 provider")
+  return withSoftTimeout(work, 19500, "MSM21 provider")
     .catch(function(error) {
       console.error(
         "[MSM21] " +
