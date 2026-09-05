@@ -1,7 +1,7 @@
 "use strict";
 
 var PROVIDER_NAME = "PencuriMovie";
-var FALLBACK_BASE_URL = "https://ww11.pencurimovie.sbs";
+var FALLBACK_BASE_URL = "https://ww21.pencurimovie.sbs";
 var DOMAIN_CONFIG_URL = "https://raw.githubusercontent.com/Asm0d3usX/CloudX/builds/Website.json";
 var TMDB_API_KEY = "1c29a5198ee1854bd5eb45dbe8d17d92";
 
@@ -64,7 +64,7 @@ function requestText(url, headers, timeoutMs) {
   var requestLabel = "PencuriMovie request";
   try {
     var parsedLabel = new URL(url);
-    requestLabel += " " + parsedLabel.hostname + parsedLabel.pathname;
+    requestLabel += " " + parsedLabel.hostname + parsedLabel.pathname + parsedLabel.search;
   } catch (_) {}
   return withSoftTimeout(request, timeoutMs || 2200, requestLabel);
 }
@@ -105,9 +105,19 @@ function updateBaseFromUrl(url) {
 
 function getBaseUrl() {
   if (cachedBaseUrl) return Promise.resolve(cachedBaseUrl);
+
+  /*
+   * Fast path: use the currently verified live domain immediately.
+   * Do not make every provider run depend on GitHub Website.json.
+   */
+  cachedBaseUrl = FALLBACK_BASE_URL;
+  return Promise.resolve(cachedBaseUrl);
+}
+
+function refreshBaseUrl() {
   if (cachedBaseUrlPromise) return cachedBaseUrlPromise;
 
-  cachedBaseUrlPromise = requestJson(DOMAIN_CONFIG_URL, {}, 650)
+  cachedBaseUrlPromise = requestJson(DOMAIN_CONFIG_URL, {}, 900)
     .then(function(data) {
       var values = data && data.pencurimovie;
       var first = Array.isArray(values) ? values[0] : values;
@@ -119,8 +129,11 @@ function getBaseUrl() {
       return cachedBaseUrl;
     })
     .catch(function() {
-      cachedBaseUrl = FALLBACK_BASE_URL;
-      return cachedBaseUrl;
+      return cachedBaseUrl || FALLBACK_BASE_URL;
+    })
+    .then(function(value) {
+      cachedBaseUrlPromise = null;
+      return value;
     });
 
   return cachedBaseUrlPromise;
@@ -287,12 +300,24 @@ function scoreCandidate(item, info, mediaType) {
 }
 
 function searchSite(baseUrl, query) {
-  var url = trimSlash(baseUrl) + "/?s=" + encodeURIComponent(query);
-  return requestText(url, { "Referer": trimSlash(baseUrl) + "/" }, 1800)
-    .then(function(result) {
-      updateBaseFromUrl(result.url);
-      return parseSearchResults(result.text, result.url);
+  function run(domain) {
+    var url = trimSlash(domain) + "/?s=" + encodeURIComponent(query);
+    return requestText(url, { "Referer": trimSlash(domain) + "/" }, 1800)
+      .then(function(result) {
+        updateBaseFromUrl(result.url);
+        return parseSearchResults(result.text, result.url);
+      });
+  }
+
+  return run(baseUrl).catch(function(firstError) {
+    return refreshBaseUrl().then(function(refreshed) {
+      if (!refreshed || trimSlash(refreshed) === trimSlash(baseUrl)) {
+        throw firstError;
+      }
+      console.log("[PencuriMovie] Retrying with refreshed domain " + refreshed);
+      return run(refreshed);
     });
+  });
 }
 
 function findBestTitle(baseUrl, info, mediaType) {
@@ -844,7 +869,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
       return streams;
     });
 
-  return withSoftTimeout(work, 7600, "PencuriMovie provider")
+  return withSoftTimeout(work, 8200, "PencuriMovie provider")
     .catch(function(error) {
       console.error(
         "[PencuriMovie] " +

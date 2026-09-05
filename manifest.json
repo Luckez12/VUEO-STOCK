@@ -1,6 +1,6 @@
 {
   "name": "VUEO Stock",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "scrapers": [
     {
       "id": "kisskh",
@@ -362,7 +362,7 @@
       "id": "pencurimovie",
       "name": "PencuriMovie",
       "description": "Malaysia and Indonesia movie and TV streams with multi-server playback",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "author": "Luckez",
       "supportedTypes": [
         "movie",
@@ -383,7 +383,7 @@
       ],
       "disabledPlatforms": [],
       "supportsExternalPlayer": true,
-      "notes": "Uses PencuriMovie dynamic domain discovery, TMDB matching, direct movieplay iframe resolution, TV season and episode selection, and direct HLS/MP4 extraction with bounded requests."
+      "notes": "Uses the current PencuriMovie domain on the fast path, with dynamic domain discovery only as failover. Supports TMDB matching, TV season and episode selection, movieplay iframe resolution, HLS/MP4 streams and available subtitles."
     }
   ]
 }
