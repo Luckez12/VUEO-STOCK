@@ -1,6 +1,6 @@
 {
   "name": "VUEO Stock",
-  "version": "1.7.2",
+  "version": "1.8.0",
   "scrapers": [
     {
       "id": "kisskh",
@@ -413,6 +413,33 @@
       "supportsExternalPlayer": true,
       "notes": "Native WebView playback headers now mirror Cloudstream MSM21: unsafe transport headers are removed, Cookie is preserved, and Referer is forced to the player mirror URL. Direct m3u8/mp4/m4v captures are preferred over /sora/ intermediates.",
       "runtimeTimeoutMs": 20000
+    },
+    {
+      "id": "cinemode",
+      "name": "CineMode",
+      "description": "Movie and TV stream resolver for the CineMode streaming PWA",
+      "version": "1.0.0",
+      "author": "Luckez",
+      "supportedTypes": [
+        "movie",
+        "tv"
+      ],
+      "filename": "providers/cinemode.js",
+      "enabled": true,
+      "limited": false,
+      "formats": [
+        "m3u8",
+        "mp4",
+        "m4v"
+      ],
+      "logo": "https://www.google.com/s2/favicons?domain=cinemode.fun&sz=128",
+      "contentLanguage": [
+        "en"
+      ],
+      "disabledPlatforms": [],
+      "supportsExternalPlayer": true,
+      "runtimeTimeoutMs": 20000,
+      "notes": "Replaces the invalid KissKH-based CineMode file. Uses VUEO native webviewResolve() on CineMode first, then a bounded TMDB iframe compatibility cascade when the site page does not expose a stream."
     }
   ]
 }
