@@ -435,6 +435,7 @@ function parseEpisodeTarget(html, pageUrl, requestedSeason, requestedEpisode) {
   return exact;
 }
 
+
 function unescapeScriptText(value) {
   return decodeHtml(String(value || ""))
     .replace(/\\u002f/gi, "/")
@@ -458,6 +459,65 @@ function inferQuality(url, label) {
   return "Auto";
 }
 
+function getHeaderValue(headers, name) {
+  try {
+    if (headers && typeof headers.get === "function") {
+      return headers.get(name) || headers.get(String(name || "").toLowerCase()) || "";
+    }
+  } catch (_) {}
+  return "";
+}
+
+function requestRaw(url, options, timeoutMs, label) {
+  var supplied = options || {};
+  var fetchOptions = {
+    method: supplied.method || "GET",
+    headers: Object.assign({}, DEFAULT_HEADERS, supplied.headers || {}),
+    redirect: supplied.redirect || "follow"
+  };
+
+  if (supplied.body !== undefined) fetchOptions.body = supplied.body;
+
+  var request = fetch(url, fetchOptions).then(function(response) {
+    var status = Number(response && response.status || 0);
+    var manualRedirect = fetchOptions.redirect === "manual" && status >= 300 && status < 400;
+
+    if (!manualRedirect && response && response.ok === false) {
+      throw new Error("HTTP " + status + " for " + url);
+    }
+
+    return Promise.resolve(response.text()).then(function(text) {
+      return {
+        text: String(text || ""),
+        url: String(response && response.url || url),
+        status: status,
+        headers: response && response.headers
+      };
+    });
+  });
+
+  return withSoftTimeout(
+    request,
+    timeoutMs || 2200,
+    label || "PencuriMovie extractor request"
+  );
+}
+
+function requestPostForm(url, data, headers, timeoutMs) {
+  var body = Object.keys(data || {}).map(function(key) {
+    return encodeURIComponent(key) + "=" + encodeURIComponent(String(data[key] == null ? "" : data[key]));
+  }).join("&");
+
+  return requestRaw(url, {
+    method: "POST",
+    headers: Object.assign({
+      "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"
+    }, headers || {}),
+    body: body,
+    redirect: "follow"
+  }, timeoutMs || 2200, "PencuriMovie POST " + url);
+}
+
 function extractDirectMedia(text, baseUrl) {
   var source = unescapeScriptText(text);
   var found = [];
@@ -475,16 +535,12 @@ function extractDirectMedia(text, baseUrl) {
 
   var absoluteRegex = /https?:\/\/[^"'<>\\\s]+?\.(?:m3u8|mp4)(?:\?[^"'<>\\\s]*)?/gi;
   var absolute;
-  while ((absolute = absoluteRegex.exec(source))) {
-    add(absolute[0], "");
-  }
+  while ((absolute = absoluteRegex.exec(source))) add(absolute[0], "");
 
   var keyedRegex =
     /(?:file|src|source|url)\s*[:=]\s*(["'])([^"']+\.(?:m3u8|mp4)(?:\?[^"']*)?)\1/gi;
   var keyed;
-  while ((keyed = keyedRegex.exec(source))) {
-    add(keyed[2], keyed[0]);
-  }
+  while ((keyed = keyedRegex.exec(source))) add(keyed[2], keyed[0]);
 
   var sourceTagRegex = /<source\b[^>]*>/gi;
   var sourceTag;
@@ -495,19 +551,69 @@ function extractDirectMedia(text, baseUrl) {
   return found;
 }
 
+function extractJwPlayerMedia(text, baseUrl) {
+  var source = unpackPackedScripts(unescapeScriptText(text));
+  var found = extractDirectMedia(source, baseUrl);
+  var seen = {};
+  found.forEach(function(item) { seen[item.url] = true; });
+
+  function add(raw, label, type) {
+    var url = safeUrl(raw, baseUrl);
+    if (!url || seen[url]) return;
+
+    var lower = String(url).toLowerCase();
+    var typeLower = String(type || "").toLowerCase();
+
+    var looksPlayable =
+      isDirectMedia(url) ||
+      /\.txt(?:$|[?#])/i.test(url) ||
+      typeLower.indexOf("mpegurl") !== -1 ||
+      typeLower.indexOf("m3u8") !== -1 ||
+      typeLower.indexOf("mp4") !== -1 ||
+      typeLower.indexOf("video") !== -1;
+
+    if (!looksPlayable) return;
+    seen[url] = true;
+    found.push({
+      url: url,
+      quality: inferQuality(url, label)
+    });
+  }
+
+  var objectRegex = /\{[\s\S]{0,600}?\}/g;
+  var objectMatch;
+  while ((objectMatch = objectRegex.exec(source))) {
+    var block = objectMatch[0];
+    var file = block.match(/\b(?:file|src)\s*:\s*(["'])(.*?)\1/i);
+    if (!file) continue;
+    var label = (block.match(/\b(?:label|quality)\s*:\s*(["'])(.*?)\1/i) || [])[2] || "";
+    var type = (block.match(/\btype\s*:\s*(["'])(.*?)\1/i) || [])[2] || "";
+    add(file[2], label, type);
+  }
+
+  var bareFileRegex = /\b(?:file|src)\s*:\s*(["'])(https?:\/\/[^"']+)\1/gi;
+  var bare;
+  while ((bare = bareFileRegex.exec(source))) add(bare[2], "", "");
+
+  return found;
+}
+
 function extractSubtitles(text, baseUrl) {
-  var source = unescapeScriptText(text);
+  var source = unpackPackedScripts(unescapeScriptText(text));
   var output = [];
   var seen = {};
 
   function add(url, label) {
     var absolute = safeUrl(url, baseUrl);
     if (!absolute || seen[absolute]) return;
+    if (!/\.(?:vtt|srt)(?:$|[?#])/i.test(absolute)) return;
+
     seen[absolute] = true;
     var lower = String(label || "").toLowerCase();
     var lang = lower.indexOf("malay") !== -1 || /\bms\b/.test(lower) ? "ms" :
       lower.indexOf("indones") !== -1 || /\bid\b/.test(lower) ? "id" :
       lower.indexOf("english") !== -1 || /\ben\b/.test(lower) ? "en" : "und";
+
     output.push({
       label: label || (lang === "und" ? "Subtitle" : lang.toUpperCase()),
       language: label || lang,
@@ -521,42 +627,25 @@ function extractSubtitles(text, baseUrl) {
   var trackRegex = /<track\b[^>]*>/gi;
   var track;
   while ((track = trackRegex.exec(source))) {
-    var src = getAttr(track[0], "src");
-    if (!src || !/\.(?:vtt|srt)(?:$|[?#])/i.test(src)) continue;
-    add(src, getAttr(track[0], "label") || getAttr(track[0], "srclang"));
+    add(
+      getAttr(track[0], "src"),
+      getAttr(track[0], "label") || getAttr(track[0], "srclang")
+    );
+  }
+
+  var objectRegex = /\{[\s\S]{0,500}?\}/g;
+  var objectMatch;
+  while ((objectMatch = objectRegex.exec(source))) {
+    var block = objectMatch[0];
+    var file = block.match(/\b(?:file|src)\s*:\s*(["'])(.*?\.(?:vtt|srt)(?:\?[^"']*)?)\1/i);
+    if (!file) continue;
+    var label = (block.match(/\b(?:label|srclang|language)\s*:\s*(["'])(.*?)\1/i) || [])[2] || "";
+    add(file[2], label);
   }
 
   var rawRegex = /https?:\/\/[^"'<>\\\s]+?\.(?:vtt|srt)(?:\?[^"'<>\\\s]*)?/gi;
   var raw;
   while ((raw = rawRegex.exec(source))) add(raw[0], "Subtitle");
-
-  return output;
-}
-
-
-function extractMovieplayIframes(text, baseUrl) {
-  var source = unescapeScriptText(text);
-  var output = [];
-  var seen = {};
-
-  var blockRegex =
-    /<div\b[^>]*class\s*=\s*(["'])[^"']*\bmovieplay\b[^"']*\1[^>]*>([\s\S]*?)<\/div>/gi;
-  var block;
-
-  while ((block = blockRegex.exec(source))) {
-    var iframeRegex = /<iframe\b[^>]*>/gi;
-    var frame;
-    while ((frame = iframeRegex.exec(block[0]))) {
-      var raw =
-        getAttr(frame[0], "data-src") ||
-        getAttr(frame[0], "data-lazy-src") ||
-        getAttr(frame[0], "src");
-      var url = safeUrl(raw, baseUrl);
-      if (!url || seen[url]) continue;
-      seen[url] = true;
-      output.push(url);
-    }
-  }
 
   return output;
 }
@@ -595,6 +684,54 @@ function extractIframes(text, baseUrl) {
   return output;
 }
 
+/*
+ * Jsoup's "div.movieplay iframe" selector handles nested divs. A regex that
+ * stops on the first </div> does not. This balanced scan mirrors the DOM
+ * selector closely enough for the PencuriMovie server tabs.
+ */
+function extractMovieplayIframes(text, baseUrl) {
+  var source = unescapeScriptText(text);
+  var output = [];
+  var seen = {};
+  var openRegex = /<div\b[^>]*>/gi;
+  var open;
+
+  while ((open = openRegex.exec(source))) {
+    var openTag = open[0];
+    var className = getAttr(openTag, "class");
+    if (!/(^|\s)movieplay(\s|$)/i.test(className)) continue;
+
+    var blockStart = open.index;
+    var scanStart = openRegex.lastIndex;
+    var tokenRegex = /<div\b[^>]*>|<\/div\s*>/gi;
+    tokenRegex.lastIndex = scanStart;
+
+    var depth = 1;
+    var endIndex = source.length;
+    var token;
+    while ((token = tokenRegex.exec(source))) {
+      if (/^<div\b/i.test(token[0])) depth += 1;
+      else depth -= 1;
+
+      if (depth === 0) {
+        endIndex = tokenRegex.lastIndex;
+        break;
+      }
+    }
+
+    var block = source.slice(blockStart, endIndex);
+    extractIframes(block, baseUrl).forEach(function(url) {
+      if (seen[url]) return;
+      seen[url] = true;
+      output.push(url);
+    });
+
+    openRegex.lastIndex = endIndex;
+  }
+
+  return output;
+}
+
 function extractRedirectTarget(text, baseUrl) {
   var source = unescapeScriptText(text);
 
@@ -610,6 +747,31 @@ function extractRedirectTarget(text, baseUrl) {
     /(?:window\.)?location(?:\.href)?\s*=\s*(["'])(https?:\/\/[^"']+)\1/i
   );
   return locationMatch ? safeUrl(locationMatch[2], baseUrl) : "";
+}
+
+function followRedirectCloudstream(url, referer) {
+  var absolute = safeUrl(url, referer);
+  if (!absolute) return Promise.resolve("");
+
+  return requestRaw(absolute, {
+    method: "GET",
+    headers: referer ? { "Referer": referer } : {},
+    redirect: "manual"
+  }, 1400, "PencuriMovie redirect " + absolute).then(function(result) {
+    var location = getHeaderValue(result.headers, "location");
+    if (location) return safeUrl(location, absolute);
+
+    var meta = extractRedirectTarget(result.text, absolute);
+    if (meta) return meta;
+
+    /*
+     * Some fetch implementations ignore redirect:"manual". In that case
+     * response.url is already the final URL, which is still useful.
+     */
+    return result.url || absolute;
+  }).catch(function() {
+    return absolute;
+  });
 }
 
 function mergeResolved(target, source) {
@@ -632,107 +794,650 @@ function mergeResolved(target, source) {
   return target;
 }
 
-function resolveEmbed(url, referer, depth) {
-  var absolute = safeUrl(url, referer);
-  if (!absolute) {
-    return Promise.resolve({ streams: [], subtitles: [] });
+function emptyResolved() {
+  return { streams: [], subtitles: [] };
+}
+
+function resolvedFromText(text, pageUrl, headers) {
+  return {
+    streams: extractJwPlayerMedia(text, pageUrl).map(function(item) {
+      return {
+        url: item.url,
+        quality: item.quality,
+        referer: pageUrl,
+        headers: headers || {}
+      };
+    }),
+    subtitles: extractSubtitles(text, pageUrl)
+  };
+}
+
+function extractScriptBodies(text) {
+  var source = String(text || "");
+  var scripts = [];
+  var regex = /<script\b[^>]*>([\s\S]*?)<\/script>/gi;
+  var match;
+  while ((match = regex.exec(source))) scripts.push(match[1]);
+  return scripts;
+}
+
+/*
+ * Cloudstream uses JsUnpacker/getAndUnpack for Dean Edwards P.A.C.K.E.R.
+ * We intercept the packer's eval so the decoded source is returned instead
+ * of executing the decoded player code.
+ */
+function unpackPackedScripts(text) {
+  var source = String(text || "");
+  var additions = [];
+
+  extractScriptBodies(source).forEach(function(body) {
+    if (body.indexOf("eval(function(p,a,c,k,e") === -1) return;
+
+    try {
+      var candidate = body.trim().replace(/;\s*$/, "");
+      var factory = Function(
+        "safeEval",
+        "return (function(eval){ return (" + candidate + "); })(safeEval);"
+      );
+      var decoded = factory(function(code) { return String(code || ""); });
+      if (decoded && typeof decoded === "string") additions.push(decoded);
+    } catch (_) {}
+  });
+
+  return additions.length ? source + "\n" + additions.join("\n") : source;
+}
+
+function originOf(url) {
+  try {
+    return new URL(url).origin;
+  } catch (_) {
+    return "";
   }
+}
+
+function hostOf(url) {
+  try {
+    return String(new URL(url).hostname || "").toLowerCase();
+  } catch (_) {
+    return "";
+  }
+}
+
+function hostMatches(host, domains) {
+  var value = String(host || "").toLowerCase();
+  return (domains || []).some(function(domain) {
+    var d = String(domain || "").toLowerCase();
+    return value === d || value.slice(-(d.length + 1)) === "." + d;
+  });
+}
+
+var STREAMWISH_DOMAINS = [
+  "streamwish.to", "mwish.pro", "dwish.pro", "embedwish.com", "hgcloud.to",
+  "wishembed.pro", "kswplayer.info", "wishfast.top", "streamwish.site",
+  "sfastwish.com", "strwish.xyz", "strwish.com", "flaswish.com", "awish.pro",
+  "obeywish.com", "jodwish.com", "swhoi.com", "multimovies.cloud",
+  "uqloads.xyz", "doodporn.xyz", "cdnwish.com", "asnwish.com",
+  "nekowish.my.id", "neko-stream.click", "swdyu.com", "wishonly.site",
+  "playerwish.com", "streamhls.to", "hlswish.com", "hglink.to"
+];
+
+var VIDHIDE_DOMAINS = [
+  "vidhidepro.com", "vidhidehub.com", "vidhidevip.com", "vidhidepre.com",
+  "smoothpre.com", "dhtpre.com", "peytonepre.com", "filelions.live",
+  "filelions.online", "filelions.to", "kinoger.be", "vidhide.com",
+  "rubyvidhub.com", "server2.shop"
+];
+
+var FILEMOON_DOMAINS = ["filemoon.to", "filemoon.in", "filemoon.sx"];
+var STREAMTAPE_DOMAINS = [
+  "streamtape.com", "streamtape.net", "streamtape.xyz",
+  "watchadsontape.com", "shavetape.cash"
+];
+var DOOD_DOMAINS = [
+  "dood.la", "dood.pm", "dood.to", "dood.so", "dood.ws", "dood.yt",
+  "dood.li", "dood.watch", "dood.cx", "dood.sh", "dood.wf",
+  "ds2play.com", "ds2video.com", "vide0.net", "myvidplay.com", "playmogo.com"
+];
+var MIXDROP_DOMAINS = [
+  "mixdrop.co", "mixdrop.bz", "mixdrop.ch", "mixdrop.to",
+  "mixdrop.si", "mixdrop.ps", "mixdrop.ag"
+];
+var VIDMOLY_DOMAINS = ["vidmoly.net", "vidmoly.me", "vidmoly.to", "vidmoly.biz"];
+var LULU_DOMAINS = ["luluvdo.com", "luluvdoo.com", "lulustream.com", "kinoger.pw"];
+var VOE_DOMAINS = [
+  "voe.sx", "donaldlineelse.com", "charlestoughrace.com", "yip.su",
+  "metagnathtuggers.com", "tubelessceliolymph.com", "simpulumlamerop.com",
+  "urochsunloath.com", "nathanfromsubject.com"
+];
+
+function extractStreamWish(url, referer) {
+  var origin = originOf(url);
+  var resolvedUrl = url;
+
+  try {
+    var parsed = new URL(url);
+    var match = parsed.pathname.match(/\/(?:f|e)\/([^/?#]+)/i);
+    if (match) resolvedUrl = origin + "/" + match[1];
+  } catch (_) {}
+
+  var headers = {
+    "Accept": "*/*",
+    "Connection": "keep-alive",
+    "Sec-Fetch-Dest": "empty",
+    "Sec-Fetch-Mode": "cors",
+    "Sec-Fetch-Site": "cross-site",
+    "Referer": origin + "/",
+    "Origin": origin,
+    "User-Agent": USER_AGENT
+  };
+
+  return requestRaw(resolvedUrl, {
+    headers: Object.assign({}, headers, referer ? { "Referer": referer } : {}),
+    redirect: "follow"
+  }, 2500, "StreamWish " + resolvedUrl).then(function(result) {
+    return resolvedFromText(result.text, result.url || resolvedUrl, headers);
+  });
+}
+
+function extractVidHide(url, referer) {
+  var embed = String(url || "")
+    .replace("/d/", "/v/")
+    .replace("/download/", "/v/")
+    .replace("/file/", "/v/")
+    .replace("/f/", "/v/");
+
+  var origin = originOf(embed);
+  var headers = {
+    "Sec-Fetch-Dest": "empty",
+    "Sec-Fetch-Mode": "cors",
+    "Sec-Fetch-Site": "cross-site",
+    "Origin": origin,
+    "User-Agent": USER_AGENT
+  };
+  if (referer) headers["Referer"] = referer;
+
+  return requestRaw(embed, {
+    headers: headers,
+    redirect: "follow"
+  }, 2500, "VidHide " + embed).then(function(result) {
+    return resolvedFromText(result.text, result.url || embed, headers);
+  });
+}
+
+function extractFileMoon(url, referer) {
+  var defaultHeaders = {
+    "Referer": url,
+    "Sec-Fetch-Dest": "iframe",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "cross-site",
+    "User-Agent": USER_AGENT
+  };
+  if (referer) defaultHeaders["Referer"] = referer;
+
+  return requestRaw(url, {
+    headers: defaultHeaders,
+    redirect: "follow"
+  }, 2400, "FileMoon " + url).then(function(initial) {
+    var frames = extractIframes(initial.text, initial.url || url);
+
+    if (!frames.length) {
+      return resolvedFromText(initial.text, initial.url || url, defaultHeaders);
+    }
+
+    return requestRaw(frames[0], {
+      headers: Object.assign({}, defaultHeaders, {
+        "Accept-Language": "en-US,en;q=0.5",
+        "Referer": initial.url || url
+      }),
+      redirect: "follow"
+    }, 2400, "FileMoon iframe " + frames[0]).then(function(frame) {
+      return resolvedFromText(frame.text, frame.url || frames[0], defaultHeaders);
+    });
+  });
+}
+
+function randomToken(length) {
+  var alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  var output = "";
+  for (var i = 0; i < length; i++) {
+    output += alphabet.charAt(Math.floor(Math.random() * alphabet.length));
+  }
+  return output;
+}
+
+function extractDood(url) {
+  var embedUrl = String(url || "").replace("/d/", "/e/");
+
+  return requestRaw(embedUrl, {
+    redirect: "follow"
+  }, 2200, "Dood " + embedUrl).then(function(page) {
+    var base = originOf(page.url || embedUrl);
+    var md5Match = page.text.match(/\/pass_md5\/[^'"\s<]+/i);
+    if (!md5Match) return emptyResolved();
+
+    var md5Url = base + md5Match[0];
+    return requestRaw(md5Url, {
+      headers: { "Referer": page.url || embedUrl },
+      redirect: "follow"
+    }, 1800, "Dood pass_md5").then(function(md5) {
+      var token = "";
+      try {
+        token = new URL(md5Url).pathname.split("/").filter(Boolean).pop() || "";
+      } catch (_) {}
+
+      var trueUrl = String(md5.text || "").trim() + randomToken(10) + "?token=" + token;
+      if (!/^https?:\/\//i.test(trueUrl)) return emptyResolved();
+
+      return {
+        streams: [{
+          url: trueUrl,
+          quality: inferQuality(page.text, ""),
+          referer: base + "/",
+          headers: { "Referer": base + "/" }
+        }],
+        subtitles: []
+      };
+    });
+  });
+}
+
+function extractMixDrop(url) {
+  var embed = String(url || "").replace("/f/", "/e/");
+
+  return requestRaw(embed, {
+    redirect: "follow"
+  }, 2300, "MixDrop " + embed).then(function(result) {
+    var unpacked = unpackPackedScripts(result.text);
+    var match = unpacked.match(/wurl.*?=.*?(["'])(.*?)\1\s*;/i);
+
+    if (match && match[2]) {
+      var direct = safeUrl(match[2], result.url || embed);
+      return {
+        streams: [{
+          url: direct,
+          quality: inferQuality(direct, ""),
+          referer: url,
+          headers: { "Referer": url }
+        }],
+        subtitles: extractSubtitles(unpacked, result.url || embed)
+      };
+    }
+
+    return resolvedFromText(unpacked, result.url || embed, { "Referer": url });
+  });
+}
+
+function extractVidmoly(url, referer) {
+  var embed = String(url || "");
+  if (embed.indexOf("/w/") !== -1) {
+    embed = embed.replace("/w/", "/embed-") + ".html";
+  }
+
+  var headers = {
+    "User-Agent": USER_AGENT,
+    "Sec-Fetch-Dest": "iframe"
+  };
+  if (referer) headers["Referer"] = referer;
+
+  return requestRaw(embed, {
+    headers: headers,
+    redirect: "follow"
+  }, 2300, "Vidmoly " + embed).then(function(result) {
+    return resolvedFromText(result.text, result.url || embed, headers);
+  });
+}
+
+function extractLulu(url, referer) {
+  var parsed;
+  try {
+    parsed = new URL(url);
+  } catch (_) {
+    return Promise.resolve(emptyResolved());
+  }
+
+  var segments = parsed.pathname.split("/").filter(Boolean);
+  var filecode = segments.length ? segments[segments.length - 1] : "";
+  if (!filecode) return Promise.resolve(emptyResolved());
+
+  var postUrl = parsed.origin + "/dl";
+  return requestPostForm(postUrl, {
+    op: "embed",
+    file_code: filecode,
+    auto: "1",
+    referer: referer || ""
+  }, referer ? { "Referer": referer } : {}, 2300).then(function(result) {
+    return resolvedFromText(result.text, result.url || postUrl, {
+      "Referer": referer || parsed.origin + "/"
+    });
+  });
+}
+
+function evalStringExpression(expression) {
+  var expr = String(expression || "").trim().replace(/;\s*$/, "");
+  if (!expr) return "";
+
+  /*
+   * StreamTape's Cloudstream extractor evaluates the small RHS expression used
+   * to build the botlink. This equivalent evaluates only that extracted RHS.
+   */
+  try {
+    return String(Function("return (" + expr + ");")() || "");
+  } catch (_) {
+    var protocolRelative = expr.match(/(["'])(\/\/[^"']+)\1/);
+    return protocolRelative ? protocolRelative[2] : "";
+  }
+}
+
+function extractStreamTape(url) {
+  return requestRaw(url, {
+    redirect: "follow"
+  }, 2300, "StreamTape " + url).then(function(result) {
+    var lines = String(result.text || "").split(/\r?\n/);
+    var line = lines.find(function(value) {
+      return value.indexOf("botlink').innerHTML") !== -1 ||
+        value.indexOf('botlink").innerHTML') !== -1;
+    });
+
+    if (!line) return emptyResolved();
+
+    var marker = line.indexOf(").innerHTML");
+    if (marker === -1) return emptyResolved();
+
+    var rhs = line.slice(marker + ").innerHTML".length).replace(/^\s*=\s*/, "");
+    var value = evalStringExpression(rhs);
+    if (!value) return emptyResolved();
+
+    var direct = value.indexOf("//") === 0 ? "https:" + value : safeUrl(value, result.url || url);
+    if (direct.indexOf("stream=1") === -1) {
+      direct += (direct.indexOf("?") === -1 ? "?" : "&") + "stream=1";
+    }
+
+    return {
+      streams: [{
+        url: direct,
+        quality: "Auto",
+        referer: url,
+        headers: { "Referer": url }
+      }],
+      subtitles: []
+    };
+  });
+}
+
+function base64DecodeText(value) {
+  var input = String(value || "").replace(/\s+/g, "");
+
+  try {
+    if (typeof atob === "function") return atob(input);
+  } catch (_) {}
+
+  try {
+    if (typeof Buffer !== "undefined") {
+      return Buffer.from(input, "base64").toString("binary");
+    }
+  } catch (_) {}
+
+  var chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=";
+  var output = "";
+  var i = 0;
+
+  while (i < input.length) {
+    var enc1 = chars.indexOf(input.charAt(i++));
+    var enc2 = chars.indexOf(input.charAt(i++));
+    var enc3 = chars.indexOf(input.charAt(i++));
+    var enc4 = chars.indexOf(input.charAt(i++));
+
+    var chr1 = (enc1 << 2) | (enc2 >> 4);
+    var chr2 = ((enc2 & 15) << 4) | (enc3 >> 2);
+    var chr3 = ((enc3 & 3) << 6) | enc4;
+
+    output += String.fromCharCode(chr1);
+    if (enc3 !== 64 && enc3 !== -1) output += String.fromCharCode(chr2);
+    if (enc4 !== 64 && enc4 !== -1) output += String.fromCharCode(chr3);
+  }
+
+  return output;
+}
+
+function rot13(value) {
+  return String(value || "").replace(/[A-Za-z]/g, function(char) {
+    var code = char.charCodeAt(0);
+    var base = code >= 97 ? 97 : 65;
+    return String.fromCharCode(((code - base + 13) % 26) + base);
+  });
+}
+
+function decryptVoeF7(encoded) {
+  try {
+    var value = rot13(encoded);
+    ["@$", "^^", "~@", "%?", "*~", "!!", "#&"].forEach(function(pattern) {
+      value = value.split(pattern).join("_");
+    });
+    value = value.replace(/_/g, "");
+
+    var stage1 = base64DecodeText(value);
+    var shifted = "";
+    for (var i = 0; i < stage1.length; i++) {
+      shifted += String.fromCharCode(stage1.charCodeAt(i) - 3);
+    }
+
+    var reversed = shifted.split("").reverse().join("");
+    return JSON.parse(base64DecodeText(reversed));
+  } catch (_) {
+    return null;
+  }
+}
+
+function extractVoe(url, referer) {
+  function read(pageUrl) {
+    return requestRaw(pageUrl, {
+      headers: referer ? { "Referer": referer } : {},
+      redirect: "follow"
+    }, 2300, "Voe " + pageUrl);
+  }
+
+  return read(url).then(function(first) {
+    var redirect = String(first.text || "").match(
+      /window\.location\.href\s*=\s*'([^']+)'\s*;?/i
+    );
+
+    var pagePromise = redirect && redirect[1]
+      ? read(safeUrl(redirect[1], first.url || url))
+      : Promise.resolve(first);
+
+    return pagePromise.then(function(page) {
+      var script = String(page.text || "").match(
+        /<script\b[^>]*type\s*=\s*(["'])application\/json\1[^>]*>([\s\S]*?)<\/script>/i
+      );
+      if (!script) return emptyResolved();
+
+      var raw = String(script[2] || "").trim();
+      var encoded = "";
+
+      try {
+        var parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length) encoded = String(parsed[0] || "");
+      } catch (_) {}
+
+      if (!encoded) {
+        var encodedMatch = raw.match(/^\s*\[\s*"([\s\S]*?)"\s*\]\s*$/);
+        if (encodedMatch) encoded = encodedMatch[1];
+      }
+
+      var decrypted = decryptVoeF7(encoded);
+      if (!decrypted) return emptyResolved();
+
+      var streams = [];
+      var origin = originOf(page.url || url);
+
+      if (decrypted.source) {
+        streams.push({
+          url: safeUrl(decrypted.source, page.url || url),
+          quality: inferQuality(decrypted.source, ""),
+          referer: origin + "/",
+          headers: { "Origin": origin, "Referer": origin + "/" }
+        });
+      }
+
+      if (decrypted.direct_access_url) {
+        streams.push({
+          url: safeUrl(decrypted.direct_access_url, page.url || url),
+          quality: inferQuality(decrypted.direct_access_url, ""),
+          referer: url,
+          headers: { "Referer": url }
+        });
+      }
+
+      return { streams: streams, subtitles: [] };
+    });
+  });
+}
+
+function extractGenericHost(url, referer, depth) {
+  return requestRaw(url, {
+    headers: referer ? { "Referer": referer } : {},
+    redirect: "follow"
+  }, 2300, "Generic extractor " + url).then(function(result) {
+    var resolved = resolvedFromText(
+      result.text,
+      result.url || url,
+      referer ? { "Referer": referer } : {}
+    );
+
+    if (resolved.streams.length || Number(depth || 0) >= 1) return resolved;
+
+    var nested = extractIframes(result.text, result.url || url).slice(0, 2);
+    if (!nested.length) return resolved;
+
+    return Promise.all(nested.map(function(child) {
+      return loadExtractorEquivalent(child, result.url || url, Number(depth || 0) + 1)
+        .catch(function() { return emptyResolved(); });
+    })).then(function(children) {
+      children.forEach(function(child) { mergeResolved(resolved, child); });
+      return resolved;
+    });
+  });
+}
+
+function extractorNameFor(url) {
+  var host = hostOf(url);
+
+  if (hostMatches(host, STREAMWISH_DOMAINS)) return "StreamWish";
+  if (hostMatches(host, VIDHIDE_DOMAINS)) return "VidHidePro";
+  if (hostMatches(host, FILEMOON_DOMAINS) || host.indexOf("filemoon") !== -1) return "FileMoon";
+  if (hostMatches(host, DOOD_DOMAINS) || host.indexOf("dood.") !== -1) return "Dood";
+  if (hostMatches(host, MIXDROP_DOMAINS) || host.indexOf("mixdrop.") !== -1) return "MixDrop";
+  if (hostMatches(host, STREAMTAPE_DOMAINS) || host.indexOf("streamtape.") !== -1) return "StreamTape";
+  if (hostMatches(host, VIDMOLY_DOMAINS) || host.indexOf("vidmoly.") !== -1) return "Vidmoly";
+  if (hostMatches(host, LULU_DOMAINS) || host.indexOf("luluvdo") !== -1 || host.indexOf("lulustream") !== -1) return "LuluStream";
+  if (hostMatches(host, VOE_DOMAINS) || host === "voe.sx") return "Voe";
+
+  return "Generic";
+}
+
+function dispatchExtractor(url, referer, depth) {
+  var name = extractorNameFor(url);
+  console.log("[PencuriMovie] extractor=" + name + " host=" + hostOf(url));
+
+  var work;
+  if (name === "StreamWish") work = extractStreamWish(url, referer);
+  else if (name === "VidHidePro") work = extractVidHide(url, referer);
+  else if (name === "FileMoon") work = extractFileMoon(url, referer);
+  else if (name === "Dood") work = extractDood(url);
+  else if (name === "MixDrop") work = extractMixDrop(url);
+  else if (name === "StreamTape") work = extractStreamTape(url);
+  else if (name === "Vidmoly") work = extractVidmoly(url, referer);
+  else if (name === "LuluStream") work = extractLulu(url, referer);
+  else if (name === "Voe") work = extractVoe(url, referer);
+  else work = extractGenericHost(url, referer, depth || 0);
+
+  return Promise.resolve(work).then(function(resolved) {
+    var streams = resolved && Array.isArray(resolved.streams) ? resolved.streams.length : 0;
+    console.log("[PencuriMovie] " + name + " streams=" + streams);
+
+    /*
+     * A recognised host can change its frontend. If the specific extraction
+     * produced nothing, try the generic packed/JWPlayer parser before giving up.
+     */
+    if (streams || name === "Generic") return resolved || emptyResolved();
+
+    return extractGenericHost(url, referer, 1).catch(function() {
+      return resolved || emptyResolved();
+    });
+  });
+}
+
+function loadExtractorEquivalent(url, referer, depth) {
+  var absolute = safeUrl(url, referer);
+  if (!absolute) return Promise.resolve(emptyResolved());
 
   if (isDirectMedia(absolute)) {
     return Promise.resolve({
       streams: [{
         url: absolute,
         quality: inferQuality(absolute, ""),
-        referer: referer || absolute
+        referer: referer || absolute,
+        headers: referer ? { "Referer": referer } : {}
       }],
       subtitles: []
     });
   }
 
-  return requestText(
-    absolute,
-    referer ? { "Referer": referer } : {},
-    depth === 0 ? 1800 : 1300
-  ).then(function(result) {
-    var resolved = { streams: [], subtitles: [] };
-    var finalUrl = result.url || absolute;
+  return followRedirectCloudstream(absolute, referer).then(function(finalUrl) {
+    finalUrl = finalUrl || absolute;
+    console.log(
+      "[PencuriMovie] iframe=" + hostOf(absolute) +
+      (finalUrl !== absolute ? " redirect=" + hostOf(finalUrl) : "")
+    );
+    return dispatchExtractor(finalUrl, referer || absolute, depth || 0);
+  });
+}
 
-    if (isDirectMedia(finalUrl)) {
-      resolved.streams.push({
-        url: finalUrl,
-        quality: inferQuality(finalUrl, ""),
-        referer: referer || absolute
-      });
-      return resolved;
-    }
-
-    extractDirectMedia(result.text, finalUrl).forEach(function(item) {
-      resolved.streams.push({
+function resolveMovieplayFrames(html, pageUrl) {
+  var direct = extractJwPlayerMedia(html, pageUrl);
+  var resolved = {
+    streams: direct.map(function(item) {
+      return {
         url: item.url,
         quality: item.quality,
-        referer: finalUrl
-      });
+        referer: pageUrl,
+        headers: { "Referer": pageUrl }
+      };
+    }),
+    subtitles: extractSubtitles(html, pageUrl)
+  };
+
+  if (resolved.streams.length) return Promise.resolve(resolved);
+
+  var frames = extractMovieplayIframes(html, pageUrl);
+  if (!frames.length) {
+    throw new Error("PencuriMovie movieplay iframe not found");
+  }
+
+  console.log("[PencuriMovie] movieplay iframes=" + frames.length);
+
+  /*
+   * Cloudstream calls loadExtractor for every iframe in div.movieplay.
+   * Run them in parallel so multiple servers do not multiply total latency.
+   */
+  return Promise.all(frames.map(function(frame) {
+    return loadExtractorEquivalent(frame, pageUrl, 0).catch(function(error) {
+      console.log(
+        "[PencuriMovie] extractor failed host=" + hostOf(frame) +
+        " error=" + (error && error.message ? error.message : String(error))
+      );
+      return emptyResolved();
     });
-
-    resolved.subtitles = extractSubtitles(result.text, finalUrl);
-
-    if (resolved.streams.length || depth >= 1) {
-      return resolved;
-    }
-
-    var redirectTarget = extractRedirectTarget(result.text, finalUrl);
-    var nested = extractIframes(result.text, finalUrl);
-    if (redirectTarget) nested.unshift(redirectTarget);
-
-    nested = nested.slice(0, 3);
-    if (!nested.length) return resolved;
-
-    return Promise.all(
-      nested.map(function(child) {
-        return resolveEmbed(child, finalUrl, depth + 1).catch(function() {
-          return { streams: [], subtitles: [] };
-        });
-      })
-    ).then(function(children) {
-      children.forEach(function(child) {
-        mergeResolved(resolved, child);
-      });
-      return resolved;
-    });
-  }).catch(function() {
-    return { streams: [], subtitles: [] };
+  })).then(function(children) {
+    children.forEach(function(child) { mergeResolved(resolved, child); });
+    return resolved;
   });
 }
 
 function resolvePlaybackPage(pageUrl) {
   return requestText(pageUrl, {}, 1800).then(function(result) {
     updateBaseFromUrl(result.url);
-
-    var resolved = {
-      streams: extractDirectMedia(result.text, result.url).map(function(item) {
-        return {
-          url: item.url,
-          quality: item.quality,
-          referer: result.url
-        };
-      }),
-      subtitles: extractSubtitles(result.text, result.url)
-    };
-
-    if (resolved.streams.length) return resolved;
-
-    var iframes = extractMovieplayIframes(result.text, result.url);
-    if (!iframes.length) {
-      iframes = extractIframes(result.text, result.url);
-    }
-    if (!iframes.length) {
-      throw new Error("PencuriMovie playback iframe not found");
-    }
-
-    return resolveEmbed(iframes[0], result.url, 0).then(function(child) {
-      mergeResolved(resolved, child);
-      return resolved;
-    });
+    return resolveMovieplayFrames(result.text, result.url || pageUrl);
   });
 }
 
@@ -761,10 +1466,10 @@ function buildStreams(resolved, info, mediaType, season, episode) {
       url: source.url,
       quality: source.quality || inferQuality(source.url, ""),
       subtitles: subtitles,
-      headers: {
+      headers: Object.assign({
         "User-Agent": USER_AGENT,
         "Referer": referer
-      }
+      }, source.headers || {})
     };
   }).filter(Boolean);
 }
@@ -825,33 +1530,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
     })
     .then(function(target) {
       if (target.detailHtml && type === "movie") {
-        var immediate = extractDirectMedia(target.detailHtml, target.targetUrl);
-        var frames = extractMovieplayIframes(target.detailHtml, target.targetUrl);
-        if (!frames.length) frames = extractIframes(target.detailHtml, target.targetUrl);
-
-        if (immediate.length) {
-          return {
-            streams: immediate.map(function(item) {
-              return {
-                url: item.url,
-                quality: item.quality,
-                referer: target.targetUrl
-              };
-            }),
-            subtitles: extractSubtitles(target.detailHtml, target.targetUrl)
-          };
-        }
-
-        if (frames.length) {
-          return resolveEmbed(frames[0], target.targetUrl, 0).then(function(child) {
-            var resolved = {
-              streams: [],
-              subtitles: extractSubtitles(target.detailHtml, target.targetUrl)
-            };
-            mergeResolved(resolved, child);
-            return resolved;
-          });
-        }
+        return resolveMovieplayFrames(target.detailHtml, target.targetUrl);
       }
 
       return resolvePlaybackPage(target.targetUrl);
@@ -869,7 +1548,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
       return streams;
     });
 
-  return withSoftTimeout(work, 8200, "PencuriMovie provider")
+  return withSoftTimeout(work, 9000, "PencuriMovie provider")
     .catch(function(error) {
       console.error(
         "[PencuriMovie] " +
