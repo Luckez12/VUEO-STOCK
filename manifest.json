@@ -1,6 +1,6 @@
 {
   "name": "VUEO Stock",
-  "version": "1.8.2",
+  "version": "1.8.3",
   "scrapers": [
     {
       "id": "kisskh",
@@ -418,7 +418,7 @@
       "id": "cinemode",
       "name": "CineMode",
       "description": "Movie and TV stream resolver for the CineMode streaming PWA",
-      "version": "1.0.2",
+      "version": "1.0.3",
       "author": "Luckez",
       "supportedTypes": [
         "movie",
@@ -439,7 +439,7 @@
       "disabledPlatforms": [],
       "supportsExternalPlayer": true,
       "runtimeTimeoutMs": 20000,
-      "notes": "CineMode direct WebView resolver with streaming interaction automation. Allows the site's ad flow to initialise, blocks popup/main-frame escapes, then clicks Watch/Play/Skip/Close controls and captures media requests."
+      "notes": "Final CineMode resolver. Does not guess internal CineMode routes. Loads the homepage, obtains the TMDB title, drives CineMode search UI, opens the matching title, interacts with Watch/Play/Skip/Close controls, and captures native WebView media requests. Requires VUEO Search Fix 5."
     }
   ]
 }
