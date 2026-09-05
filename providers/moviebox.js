@@ -3,7 +3,7 @@
 var PROVIDER_NAME = "MovieBox";
 var TMDB_API_KEY = "1c29a5198ee1854bd5eb45dbe8d17d92";
 
-var MOVIEBOX_WEB = "https://moviebox.pk";
+var MOVIEBOX_WEB = "https://moviebox.asia";
 
 var WEB_HOSTS = [
   "https://moviebox.ph",
@@ -25,7 +25,7 @@ var COMMON_HEADERS = {
 
 var PROVIDER_BUDGET_MS = 19000;
 var WEBVIEW_BUDGET_MS = 14500;
-var SEARCH_COLLECT_MS = 4700;
+var SEARCH_COLLECT_MS = 4300;
 var DETAIL_RACE_MS = 3400;
 var PLAY_RACE_MS = 5200;
 var CAPTION_RACE_MS = 900;
@@ -1258,7 +1258,34 @@ function nativeWebViewAvailable() {
   );
 }
 
+function buildMovieBoxWatchUrl(
+  tmdbId,
+  mediaType,
+  season,
+  episode
+) {
+  if (mediaType === "tv") {
+    return (
+      MOVIEBOX_WEB +
+      "/watch/tv/" +
+      encodeURIComponent(tmdbId) +
+      "/?se=" +
+      encodeURIComponent(Number(season || 1)) +
+      "&ep=" +
+      encodeURIComponent(Number(episode || 1))
+    );
+  }
+
+  return (
+    MOVIEBOX_WEB +
+    "/watch/movie/" +
+    encodeURIComponent(tmdbId) +
+    "/"
+  );
+}
+
 function resolveMovieBoxWebsite(
+  tmdbId,
   info,
   mediaType,
   season,
@@ -1268,58 +1295,70 @@ function resolveMovieBoxWebsite(
     return Promise.resolve([]);
   }
 
-  var interactions = [];
-
-  if (mediaType === "tv") {
-    interactions.push(
-      "season " + Number(season || 1),
-      "episode " + Number(episode || 1),
-      "ep " + Number(episode || 1)
+  var watchUrl =
+    buildMovieBoxWatchUrl(
+      tmdbId,
+      mediaType,
+      season,
+      episode
     );
-  }
 
-  interactions = interactions.concat([
-    "watch online",
-    "watch",
+  /*
+   * On the real MovieBox watch page the first server is "Zen" and MovieBox
+   * exposes a Change Server control for additional mirrors. Repeated
+   * interaction ticks therefore do useful work instead of repeatedly trying
+   * the same homepage search control.
+   */
+  var interactions = [
     "play",
     "continue",
+    "watch",
+    "change server",
     "skip ad",
     "skip",
     "close ad",
     "close"
-  ]);
+  ];
+
+  if (mediaType === "tv") {
+    interactions.unshift(
+      "episode " + Number(episode || 1),
+      "season " + Number(season || 1)
+    );
+  }
 
   console.log(
-    "[MovieBox] Native website search=" +
-    info.title
+    "[MovieBox] Native watch page=" +
+    watchUrl
   );
 
   return globalThis.webviewResolve(
-    MOVIEBOX_WEB + "/",
+    watchUrl,
     {
       referer:
         MOVIEBOX_WEB + "/",
       directLoad: true,
-      searchText:
-        info.title,
       timeoutMs:
         WEBVIEW_BUDGET_MS,
-      finishAfterFirstMs: 550,
+      finishAfterFirstMs: 500,
       suppressPopups: true,
       lockMainFrameHost: true,
       interactionTexts:
         interactions,
       clickDelaysMs: [
-        550,
-        1100,
-        1800,
-        2700,
-        3900,
-        5300,
-        7000,
+        500,
+        1050,
+        1650,
+        2350,
+        3150,
+        4050,
+        5050,
+        6200,
+        7500,
         9000,
-        11200,
-        13400
+        10800,
+        12800,
+        14300
       ],
       match: [
         ".m3u8",
@@ -1418,7 +1457,7 @@ function resolveMovieBoxWebsite(
               sanitiseHeaders(
                 item.headers,
                 capturedReferer ||
-                  MOVIEBOX_WEB + "/"
+                  watchUrl
               )
           };
         });
@@ -1445,14 +1484,14 @@ function resolveMovieBoxWebsite(
     });
 
     console.log(
-      "[MovieBox] Native website streams=" +
+      "[MovieBox] Native watch streams=" +
       output.length
     );
 
     return output;
   }).catch(function(error) {
     console.log(
-      "[MovieBox] Native website failed: " +
+      "[MovieBox] Native watch failed: " +
       (
         error &&
         error.message
@@ -1528,6 +1567,7 @@ function getStreams(
         return firstNonEmptyStreams(
           [
             resolveMovieBoxWebsite(
+              tmdbId,
               info,
               type,
               requestedSeason,
