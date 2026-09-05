@@ -3,15 +3,14 @@
 var PROVIDER_NAME = "MovieBox";
 var TMDB_API_KEY = "1c29a5198ee1854bd5eb45dbe8d17d92";
 
+var MOVIEBOX_WEB = "https://moviebox.pk";
+
 var WEB_HOSTS = [
   "https://moviebox.ph",
   "https://moviebox.pk",
   "https://moviebox.ng",
   "https://filmboom.top"
 ];
-
-var MOVIEBOX_WEB = "https://moviebox.asia";
-var VIDEOEASY_BASE = "https://player.videasy.to";
 
 var USER_AGENT =
   "Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 " +
@@ -25,16 +24,18 @@ var COMMON_HEADERS = {
 };
 
 var PROVIDER_BUDGET_MS = 19000;
-var DIRECT_PLAYER_MS = 6500;
-var SEARCH_RACE_MS = 4200;
+var WEBVIEW_BUDGET_MS = 14500;
+var SEARCH_COLLECT_MS = 4700;
+var DETAIL_RACE_MS = 3400;
 var PLAY_RACE_MS = 5200;
-var CAPTION_RACE_MS = 2200;
+var CAPTION_RACE_MS = 900;
 
 var preferredWebHost = null;
 
 function withSoftTimeout(promise, timeoutMs, label) {
   return new Promise(function(resolve, reject) {
     var settled = false;
+
     var timer = setTimeout(function() {
       if (settled) return;
       settled = true;
@@ -58,7 +59,47 @@ function withSoftTimeout(promise, timeoutMs, label) {
   });
 }
 
-function raceFirstValid(tasks, timeoutMs, label) {
+function firstNonEmptyStreams(tasks, timeoutMs) {
+  if (!Array.isArray(tasks) || !tasks.length) {
+    return Promise.resolve([]);
+  }
+
+  return new Promise(function(resolve) {
+    var settled = false;
+    var pending = tasks.length;
+
+    function finish(value) {
+      if (settled) return;
+      settled = true;
+      resolve(Array.isArray(value) ? value : []);
+    }
+
+    tasks.forEach(function(task) {
+      Promise.resolve(task)
+        .then(function(value) {
+          if (settled) return;
+
+          if (Array.isArray(value) && value.length) {
+            finish(value);
+            return;
+          }
+
+          pending -= 1;
+          if (pending <= 0) finish([]);
+        })
+        .catch(function() {
+          pending -= 1;
+          if (pending <= 0) finish([]);
+        });
+    });
+
+    setTimeout(function() {
+      finish([]);
+    }, timeoutMs);
+  });
+}
+
+function raceFirstValid(tasks, timeoutMs) {
   if (!Array.isArray(tasks) || !tasks.length) {
     return Promise.resolve(null);
   }
@@ -77,10 +118,12 @@ function raceFirstValid(tasks, timeoutMs, label) {
       Promise.resolve(task)
         .then(function(value) {
           if (settled) return;
+
           if (value) {
             finish(value);
             return;
           }
+
           pending -= 1;
           if (pending <= 0) finish(null);
         })
@@ -91,17 +134,52 @@ function raceFirstValid(tasks, timeoutMs, label) {
     });
 
     setTimeout(function() {
-      if (!settled) {
-        console.log("[MovieBox] " + (label || "race") + " reached " + timeoutMs + "ms");
-        finish(null);
-      }
+      finish(null);
     }, timeoutMs);
+  });
+}
+
+function collectSettled(tasks, timeoutMs) {
+  if (!Array.isArray(tasks) || !tasks.length) {
+    return Promise.resolve([]);
+  }
+
+  return new Promise(function(resolve) {
+    var results = [];
+    var pending = tasks.length;
+    var settled = false;
+
+    function finish() {
+      if (settled) return;
+      settled = true;
+      resolve(results);
+    }
+
+    tasks.forEach(function(task) {
+      Promise.resolve(task)
+        .then(function(value) {
+          if (value) results.push(value);
+        })
+        .catch(function() {})
+        .then(function() {
+          pending -= 1;
+          if (pending <= 0) finish();
+        });
+    });
+
+    setTimeout(finish, timeoutMs);
   });
 }
 
 function fetchJson(url, options, timeoutMs, label) {
   var opts = options || {};
-  var headers = Object.assign({}, COMMON_HEADERS, opts.headers || {});
+
+  var headers = Object.assign(
+    {},
+    COMMON_HEADERS,
+    opts.headers || {}
+  );
+
   var fetchOptions = {
     method: opts.method || "GET",
     headers: headers,
@@ -115,8 +193,14 @@ function fetchJson(url, options, timeoutMs, label) {
   return withSoftTimeout(
     fetch(url, fetchOptions).then(function(response) {
       if (!response.ok) {
-        throw new Error("HTTP " + response.status + " for " + url);
+        throw new Error(
+          "HTTP " +
+          response.status +
+          " for " +
+          url
+        );
       }
+
       return response.json();
     }),
     timeoutMs || 3200,
@@ -125,7 +209,11 @@ function fetchJson(url, options, timeoutMs, label) {
 }
 
 function getTmdbInfo(tmdbId, mediaType) {
-  var endpoint = mediaType === "tv" ? "tv" : "movie";
+  var endpoint =
+    mediaType === "tv"
+      ? "tv"
+      : "movie";
+
   var url =
     "https://api.themoviedb.org/3/" +
     endpoint +
@@ -136,28 +224,53 @@ function getTmdbInfo(tmdbId, mediaType) {
 
   return fetchJson(
     url,
-    { headers: { "Accept": "application/json" } },
+    {
+      headers: {
+        "Accept": "application/json"
+      }
+    },
     1300,
     "TMDB"
   ).then(function(data) {
     return {
-      title: String(data && (data.title || data.name) || "").trim(),
-      originalTitle: String(
-        data && (data.original_title || data.original_name) || ""
-      ).trim(),
-      year: String(
-        data && (data.release_date || data.first_air_date) || ""
-      ).split("-")[0]
+      title:
+        String(
+          data &&
+          (data.title || data.name) ||
+          ""
+        ).trim(),
+      originalTitle:
+        String(
+          data &&
+          (
+            data.original_title ||
+            data.original_name
+          ) ||
+          ""
+        ).trim(),
+      year:
+        String(
+          data &&
+          (
+            data.release_date ||
+            data.first_air_date
+          ) ||
+          ""
+        ).split("-")[0]
     };
   });
 }
 
 function normalizeTitle(value) {
-  var text = String(value || "").toLowerCase();
+  var text =
+    String(value || "")
+      .toLowerCase();
 
   try {
     if (typeof text.normalize === "function") {
-      text = text.normalize("NFKD").replace(/[\u0300-\u036f]/g, "");
+      text =
+        text.normalize("NFKD")
+          .replace(/[\u0300-\u036f]/g, "");
     }
   } catch (_) {}
 
@@ -176,336 +289,182 @@ function titleScore(candidate, expected) {
 
   if (!left || !right) return 0;
   if (left === right) return 100;
-  if (left.indexOf(right) !== -1 || right.indexOf(left) !== -1) return 80;
 
-  var leftWords = left.split(" ").filter(function(x) { return x.length > 1; });
-  var rightWords = right.split(" ").filter(function(x) { return x.length > 1; });
+  if (
+    left.indexOf(right) !== -1 ||
+    right.indexOf(left) !== -1
+  ) {
+    return 82;
+  }
 
-  if (!leftWords.length || !rightWords.length) return 0;
+  var leftWords =
+    left.split(" ")
+      .filter(function(word) {
+        return word.length > 1;
+      });
+
+  var rightWords =
+    right.split(" ")
+      .filter(function(word) {
+        return word.length > 1;
+      });
+
+  if (!leftWords.length || !rightWords.length) {
+    return 0;
+  }
 
   var set = {};
-  leftWords.forEach(function(word) { set[word] = true; });
+  leftWords.forEach(function(word) {
+    set[word] = true;
+  });
 
-  var matched = rightWords.filter(function(word) { return set[word]; }).length;
+  var matched =
+    rightWords.filter(function(word) {
+      return set[word];
+    }).length;
+
   if (!matched) return 0;
 
   return Math.round(
     (
-      (matched / rightWords.length) * 0.75 +
-      (matched / leftWords.length) * 0.25
-    ) * 70
+      matched / rightWords.length * 0.75 +
+      matched / leftWords.length * 0.25
+    ) * 72
   );
 }
 
 function itemYear(item) {
-  var raw = String(
-    item &&
-    (
-      item.releaseDate ||
-      item.release_date ||
-      item.year ||
-      item.firstAirDate ||
-      item.first_air_date
-    ) ||
-    ""
-  );
+  var raw =
+    String(
+      item &&
+      (
+        item.releaseDate ||
+        item.release_date ||
+        item.year ||
+        item.firstAirDate ||
+        item.first_air_date
+      ) ||
+      ""
+    );
 
-  var match = raw.match(/\b(19|20)\d{2}\b/);
+  var match =
+    raw.match(/\b(19|20)\d{2}\b/);
+
   return match ? match[0] : "";
 }
 
-function subjectTypeMatches(item, mediaType) {
-  var value = Number(
-    item &&
-    (
-      item.subjectType !== undefined
-        ? item.subjectType
-        : item.subject_type
-    )
-  );
+function typeMatches(item, mediaType) {
+  var type =
+    Number(
+      item &&
+      (
+        item.subjectType !== undefined
+          ? item.subjectType
+          : item.subject_type
+      )
+    );
 
-  if (!value) return true;
-  return mediaType === "movie" ? value === 1 : value !== 1;
+  if (!type) return true;
+
+  return mediaType === "movie"
+    ? type === 1
+    : type !== 1;
 }
 
 function extractSearchItems(payload) {
   var data =
-    payload && payload.data && typeof payload.data === "object"
+    payload &&
+    payload.data &&
+    typeof payload.data === "object"
       ? payload.data
       : {};
 
-  if (Array.isArray(data.items)) return data.items;
-  if (Array.isArray(data.subjectList)) return data.subjectList;
+  if (Array.isArray(data.items)) {
+    return data.items;
+  }
 
-  if (Array.isArray(data.results)) {
-    var flat = [];
-    data.results.forEach(function(group) {
-      if (group && Array.isArray(group.subjects)) {
-        group.subjects.forEach(function(item) { flat.push(item); });
-      }
-    });
-    return flat;
+  if (Array.isArray(data.subjectList)) {
+    return data.subjectList;
   }
 
   return [];
 }
 
-function pickBestCandidate(items, info, mediaType) {
-  if (!Array.isArray(items) || !items.length) return null;
+function scoreCandidate(item, info, mediaType) {
+  var score =
+    Math.max(
+      titleScore(
+        item && item.title,
+        info.title
+      ),
+      titleScore(
+        item && item.title,
+        info.originalTitle
+      )
+    );
 
-  var scored = items
-    .map(function(item, index) {
-      var score = Math.max(
-        titleScore(item && item.title, info.title),
-        titleScore(item && item.title, info.originalTitle)
-      );
+  var year =
+    itemYear(item);
 
-      var year = itemYear(item);
+  if (
+    info.year &&
+    year
+  ) {
+    if (String(info.year) === String(year)) {
+      score += 30;
+    } else {
+      score -= 30;
+    }
+  }
 
-      if (info.year && year) {
-        if (String(info.year) === String(year)) score += 28;
-        else score -= 24;
-      }
+  if (typeMatches(item, mediaType)) {
+    score += 22;
+  } else {
+    score -= 80;
+  }
 
-      if (subjectTypeMatches(item, mediaType)) score += 18;
-      else score -= 70;
-
-      score += Math.max(0, 8 - index);
-
-      return { item: item, score: score };
-    })
-    .filter(function(entry) {
-      return entry.item && entry.item.subjectId;
-    })
-    .sort(function(a, b) {
-      return b.score - a.score;
-    });
-
-  if (!scored.length) return null;
-
-  /*
-   * Do not reproduce the old strict confidence bug.
-   * The Cloudstream provider itself does not apply a confidence threshold.
-   * We only reject a candidate when it has effectively no title relationship.
-   */
-  if (scored[0].score < 18) return null;
-
-  return scored[0];
+  return score;
 }
 
 function orderedHosts(seedHost) {
-  var result = [];
+  var output = [];
 
   function add(host) {
-    var value = String(host || "").replace(/\/+$/, "");
-    if (!value || result.indexOf(value) !== -1) return;
-    result.push(value);
-  }
-
-  add(seedHost);
-  add(preferredWebHost);
-  WEB_HOSTS.forEach(add);
-
-  return result;
-}
-
-function nativeWebViewAvailable() {
-  return (
-    typeof globalThis !== "undefined" &&
-    typeof globalThis.webviewResolve === "function"
-  );
-}
-
-function isMediaUrl(url) {
-  var value = String(url || "").toLowerCase();
-  return (
-    value.indexOf(".m3u8") !== -1 ||
-    value.indexOf(".mp4") !== -1 ||
-    value.indexOf(".m4v") !== -1 ||
-    value.indexOf("/sora/") !== -1
-  );
-}
-
-function inferQuality(url, label) {
-  var value = (String(label || "") + " " + String(url || "")).toLowerCase();
-
-  if (value.indexOf("2160") !== -1 || value.indexOf("4k") !== -1) return "2160p";
-  if (value.indexOf("1440") !== -1) return "1440p";
-  if (value.indexOf("1080") !== -1) return "1080p";
-  if (value.indexOf("720") !== -1) return "720p";
-  if (value.indexOf("480") !== -1) return "480p";
-  if (value.indexOf("360") !== -1) return "360p";
-  return "Auto";
-}
-
-function sanitiseHeaders(input, referer) {
-  var output = {};
-  var source = input && typeof input === "object" ? input : {};
-
-  Object.keys(source).forEach(function(key) {
-    var lower = String(key || "").toLowerCase();
+    var value =
+      String(host || "")
+        .replace(/\/+$/, "");
 
     if (
-      lower === "host" ||
-      lower === "connection" ||
-      lower === "content-length" ||
-      lower === "accept-encoding" ||
-      lower === "range" ||
-      lower === "origin" ||
-      lower.indexOf("sec-fetch-") === 0
+      !value ||
+      output.indexOf(value) !== -1
     ) {
       return;
     }
 
-    output[key] = String(source[key]);
-  });
+    output.push(value);
+  }
 
-  output["User-Agent"] =
-    output["User-Agent"] ||
-    output["user-agent"] ||
-    USER_AGENT;
+  add(seedHost);
+  add(preferredWebHost);
 
-  output["Referer"] = referer;
-  delete output["referer"];
+  WEB_HOSTS.forEach(add);
 
   return output;
 }
 
-function buildCurrentPlayerUrl(mediaType, tmdbId, season, episode) {
-  if (mediaType === "tv") {
-    return (
-      VIDEOEASY_BASE +
-      "/tv/" +
-      encodeURIComponent(tmdbId) +
-      "/" +
-      encodeURIComponent(season || 1) +
-      "/" +
-      encodeURIComponent(episode || 1)
-    );
-  }
-
-  return VIDEOEASY_BASE + "/movie/" + encodeURIComponent(tmdbId);
-}
-
-function resolveCurrentMovieBoxPlayer(tmdbId, mediaType, season, episode) {
-  if (!nativeWebViewAvailable()) {
-    return Promise.resolve([]);
-  }
-
-  var playerUrl = buildCurrentPlayerUrl(
-    mediaType,
-    tmdbId,
-    season,
-    episode
-  );
-
-  console.log("[MovieBox] Direct current player=" + playerUrl);
-
-  return globalThis.webviewResolve(playerUrl, {
-    referer:
-      MOVIEBOX_WEB +
-      "/watch/" +
-      mediaType +
-      "/" +
-      encodeURIComponent(tmdbId) +
-      "/",
-    directLoad: true,
-    timeoutMs: DIRECT_PLAYER_MS,
-    finishAfterFirstMs: 500,
-    suppressPopups: true,
-    lockMainFrameHost: false,
-    interactionTexts: [
-      "play",
-      "continue",
-      "watch",
-      "skip",
-      "close"
-    ],
-    clickDelaysMs: [
-      500,
-      1200,
-      2300,
-      3800,
-      5200
-    ],
-    match: [
-      ".m3u8",
-      ".mp4",
-      ".m4v",
-      "/sora/"
-    ],
-    blocked: [
-      "doubleclick",
-      "googlesyndication",
-      "/vast"
-    ],
-    injectAbyssHook: true
-  }).then(function(result) {
-    var captured =
-      result && Array.isArray(result.streams)
-        ? result.streams
-        : [];
-
-    var seen = {};
-
-    var streams = captured
-      .filter(function(item) {
-        return item && item.url && isMediaUrl(item.url);
-      })
-      .filter(function(item) {
-        var url = String(item.url);
-        if (seen[url]) return false;
-        seen[url] = true;
-        return true;
-      })
-      .map(function(item, index) {
-        var url = String(item.url);
-
-        return {
-          name:
-            PROVIDER_NAME +
-            " Zen" +
-            (index > 0 ? " " + (index + 1) : ""),
-          title: PROVIDER_NAME,
-          url: url,
-          quality: inferQuality(url, item.label),
-          type: "direct",
-          subtitles: [],
-          headers: sanitiseHeaders(
-            item.headers,
-            playerUrl
-          )
-        };
-      });
-
-    streams.sort(function(a, b) {
-      var qa = parseInt(String(a.quality), 10) || 0;
-      var qb = parseInt(String(b.quality), 10) || 0;
-      return qb - qa;
+function searchHost(host, query) {
+  var body =
+    JSON.stringify({
+      keyword:
+        String(query || "").trim(),
+      page: 1,
+      perPage: 24,
+      subjectType: 0
     });
 
-    console.log("[MovieBox] Current player streams=" + streams.length);
-    return streams;
-  }).catch(function(error) {
-    console.log(
-      "[MovieBox] Current player failed: " +
-      (error && error.message ? error.message : String(error))
-    );
-    return [];
-  });
-}
-
-function searchOneHost(host, query) {
-  var url = host + "/wefeed-h5-bff/web/subject/search";
-  var body = JSON.stringify({
-    keyword: String(query || "").trim(),
-    page: 1,
-    perPage: 24,
-    subjectType: 0
-  });
-
   return fetchJson(
-    url,
+    host +
+      "/wefeed-h5-bff/web/subject/search",
     {
       method: "POST",
       headers: {
@@ -514,58 +473,114 @@ function searchOneHost(host, query) {
       },
       body: body
     },
-    3200,
+    3800,
     "MovieBox search " + host
   ).then(function(payload) {
-    var items = extractSearchItems(payload);
-    return items.length
-      ? { host: host, items: items }
-      : null;
+    return {
+      host: host,
+      items: extractSearchItems(payload)
+    };
   });
 }
 
-function raceSearchHostsRaw(query) {
-  var hosts = orderedHosts();
-
-  return raceFirstValid(
-    hosts.map(function(host) {
-      return searchOneHost(host, query);
+function collectAllSearchResults(query) {
+  return collectSettled(
+    orderedHosts().map(function(host) {
+      return searchHost(
+        host,
+        query
+      );
     }),
-    SEARCH_RACE_MS,
-    "search"
+    SEARCH_COLLECT_MS
   );
 }
 
-function searchBestCandidate(info, mediaType) {
-  return raceSearchHostsRaw(info.title).then(function(result) {
-    if (!result) return null;
+function chooseAcrossMirrors(
+  searchResults,
+  info,
+  mediaType
+) {
+  var candidates = [];
 
-    var best = pickBestCandidate(result.items, info, mediaType);
-    if (best) {
-      preferredWebHost = result.host;
-      return {
-        host: result.host,
-        item: best.item,
-        score: best.score
-      };
+  (searchResults || []).forEach(
+    function(result) {
+      (result.items || []).forEach(
+        function(item, index) {
+          if (
+            !item ||
+            !item.subjectId
+          ) {
+            return;
+          }
+
+          candidates.push({
+            host: result.host,
+            item: item,
+            score:
+              scoreCandidate(
+                item,
+                info,
+                mediaType
+              ) +
+              Math.max(
+                0,
+                5 - index
+              )
+          });
+        }
+      );
     }
+  );
+
+  candidates.sort(function(a, b) {
+    return b.score - a.score;
+  });
+
+  if (!candidates.length) {
+    return null;
+  }
+
+  /*
+   * Exact or partial title relation is enough. Do not use the old high
+   * confidence gate. If MovieBox itself returned the queried title, year and
+   * type bonuses make the intended result naturally win.
+   */
+  if (candidates[0].score < 22) {
+    return null;
+  }
+
+  return candidates[0];
+}
+
+function searchH5(
+  info,
+  mediaType
+) {
+  return collectAllSearchResults(
+    info.title
+  ).then(function(results) {
+    var best =
+      chooseAcrossMirrors(
+        results,
+        info,
+        mediaType
+      );
+
+    if (best) return best;
 
     if (
       info.originalTitle &&
-      normalizeTitle(info.originalTitle) !== normalizeTitle(info.title)
+      normalizeTitle(info.originalTitle) !==
+        normalizeTitle(info.title)
     ) {
-      return raceSearchHostsRaw(info.originalTitle).then(function(extra) {
-        if (!extra) return null;
-
-        var second = pickBestCandidate(extra.items, info, mediaType);
-        if (!second) return null;
-
-        preferredWebHost = extra.host;
-        return {
-          host: extra.host,
-          item: second.item,
-          score: second.score
-        };
+      return collectAllSearchResults(
+        info.originalTitle
+      ).then(function(extra) {
+        return chooseAcrossMirrors(
+          extra,
+          info,
+          mediaType
+        );
       });
     }
 
@@ -573,32 +588,70 @@ function searchBestCandidate(info, mediaType) {
   });
 }
 
-function extractStreams(payload) {
-  var data =
-    payload && payload.data && typeof payload.data === "object"
-      ? payload.data
-      : {};
+function raceDetailHosts(
+  subjectId,
+  seedHost
+) {
+  return raceFirstValid(
+    orderedHosts(seedHost).map(
+      function(host) {
+        return fetchJson(
+          host +
+            "/wefeed-h5-bff/web/subject/detail?subjectId=" +
+            encodeURIComponent(subjectId),
+          {
+            headers: {
+              "Referer": host + "/"
+            }
+          },
+          3000,
+          "MovieBox detail " + host
+        ).then(function(payload) {
+          var data =
+            payload &&
+            payload.data &&
+            typeof payload.data === "object"
+              ? payload.data
+              : null;
 
-  if (Array.isArray(data.streams)) return data.streams;
+          if (
+            !data ||
+            !data.subject
+          ) {
+            return null;
+          }
 
-  if (
-    data.playInfo &&
-    Array.isArray(data.playInfo.streams)
-  ) {
-    return data.playInfo.streams;
-  }
-
-  return [];
+          return {
+            host: host,
+            subject: data.subject
+          };
+        });
+      }
+    ),
+    DETAIL_RACE_MS
+  );
 }
 
-function buildPlayReferer(host, item, subjectId) {
-  var detailPath = String(
-    item && (item.detailPath || item.detail_path) || ""
-  )
-    .trim()
-    .replace(/^\/+/, "");
+function buildPlayReferer(
+  host,
+  item,
+  subjectId
+) {
+  var detailPath =
+    String(
+      item &&
+      (
+        item.detailPath ||
+        item.detail_path
+      ) ||
+      ""
+    )
+      .trim()
+      .replace(/^\/+/, "");
 
-  if (!detailPath) return host + "/";
+  if (!detailPath) {
+    return host + "/";
+  }
 
   return (
     host +
@@ -610,49 +663,102 @@ function buildPlayReferer(host, item, subjectId) {
   );
 }
 
-function racePlayHosts(item, mediaType, season, episode, seedHost) {
-  var subjectId = String(item && item.subjectId || "").trim();
-  if (!subjectId) return Promise.resolve(null);
+function extractStreams(payload) {
+  var data =
+    payload &&
+    payload.data &&
+    typeof payload.data === "object"
+      ? payload.data
+      : {};
 
-  var requestedSeason = mediaType === "tv" ? Number(season || 1) : 0;
-  var requestedEpisode = mediaType === "tv" ? Number(episode || 1) : 0;
+  return Array.isArray(data.streams)
+    ? data.streams
+    : [];
+}
+
+function racePlayHosts(
+  item,
+  mediaType,
+  season,
+  episode,
+  seedHost
+) {
+  var subjectId =
+    String(
+      item &&
+      item.subjectId ||
+      ""
+    ).trim();
+
+  if (!subjectId) {
+    return Promise.resolve(null);
+  }
+
+  var se =
+    mediaType === "tv"
+      ? Number(season || 1)
+      : 0;
+
+  var ep =
+    mediaType === "tv"
+      ? Number(episode || 1)
+      : 0;
 
   return raceFirstValid(
-    orderedHosts(seedHost).map(function(host) {
-      var referer = buildPlayReferer(host, item, subjectId);
-      var url =
-        host +
-        "/wefeed-h5-bff/web/subject/play" +
-        "?subjectId=" +
-        encodeURIComponent(subjectId) +
-        "&se=" +
-        encodeURIComponent(requestedSeason) +
-        "&ep=" +
-        encodeURIComponent(requestedEpisode);
+    orderedHosts(seedHost).map(
+      function(host) {
+        var referer =
+          buildPlayReferer(
+            host,
+            item,
+            subjectId
+          );
 
-      return fetchJson(
-        url,
-        { headers: { "Referer": referer } },
-        4300,
-        "MovieBox play " + host
-      ).then(function(payload) {
-        var streams = extractStreams(payload)
-          .filter(function(source) {
-            return source && String(source.url || "").trim();
-          });
+        var url =
+          host +
+          "/wefeed-h5-bff/web/subject/play" +
+          "?subjectId=" +
+          encodeURIComponent(subjectId) +
+          "&se=" +
+          encodeURIComponent(se) +
+          "&ep=" +
+          encodeURIComponent(ep);
 
-        if (!streams.length) return null;
+        return fetchJson(
+          url,
+          {
+            headers: {
+              "Referer": referer
+            }
+          },
+          4400,
+          "MovieBox play " + host
+        ).then(function(payload) {
+          var streams =
+            extractStreams(payload)
+              .filter(function(source) {
+                return (
+                  source &&
+                  String(
+                    source.url || ""
+                  ).trim()
+                );
+              });
 
-        return {
-          host: host,
-          referer: referer,
-          subjectId: subjectId,
-          streams: streams
-        };
-      });
-    }),
-    PLAY_RACE_MS,
-    "play"
+          if (!streams.length) {
+            return null;
+          }
+
+          return {
+            host: host,
+            referer: referer,
+            subjectId: subjectId,
+            streams: streams
+          };
+        });
+      }
+    ),
+    PLAY_RACE_MS
   );
 }
 
@@ -666,106 +772,288 @@ function subtitleLanguage(caption) {
       return String(value)
         .trim()
         .toLowerCase()
-        .replace(/_/g, "-")
-        .replace(/\s+/g, " ");
+        .replace(/_/g, "-");
     });
 
-  function contains(names) {
+  function has(valuesToFind) {
     return values.some(function(value) {
-      return names.some(function(name) {
-        return value === name || value.indexOf(name) !== -1;
-      });
+      return valuesToFind.some(
+        function(needle) {
+          return (
+            value === needle ||
+            value.indexOf(needle) !== -1
+          );
+        }
+      );
     });
   }
 
-  if (contains(["ms", "msa", "may", "malay", "bahasa melayu", "bahasa malaysia"])) {
-    return { code: "ms", label: "Malay" };
+  if (
+    has([
+      "ms",
+      "msa",
+      "may",
+      "malay",
+      "bahasa melayu",
+      "bahasa malaysia"
+    ])
+  ) {
+    return {
+      code: "ms",
+      label: "Malay"
+    };
   }
 
-  if (contains(["en", "eng", "english"])) {
-    return { code: "en", label: "English" };
+  if (
+    has([
+      "en",
+      "eng",
+      "english"
+    ])
+  ) {
+    return {
+      code: "en",
+      label: "English"
+    };
   }
 
-  if (contains(["id", "ind", "indonesian", "bahasa indonesia"])) {
-    return { code: "id", label: "Indonesian" };
+  if (
+    has([
+      "id",
+      "ind",
+      "indonesian",
+      "bahasa indonesia"
+    ])
+  ) {
+    return {
+      code: "id",
+      label: "Indonesian"
+    };
   }
 
   return null;
 }
 
-function raceCaptions(playResult) {
-  var seed = playResult.streams.find(function(source) {
-    return source && source.id && source.format;
-  });
+function loadCaptions(
+  playResult
+) {
+  var seed =
+    playResult.streams.find(
+      function(source) {
+        return (
+          source &&
+          source.id &&
+          source.format
+        );
+      }
+    );
 
-  if (!seed) return Promise.resolve([]);
+  if (!seed) {
+    return Promise.resolve([]);
+  }
 
   return raceFirstValid(
-    orderedHosts(playResult.host).map(function(host) {
-      var url =
-        host +
-        "/wefeed-h5-bff/web/subject/caption" +
-        "?format=" +
-        encodeURIComponent(seed.format) +
-        "&id=" +
-        encodeURIComponent(seed.id) +
-        "&subjectId=" +
-        encodeURIComponent(playResult.subjectId);
+    orderedHosts(playResult.host).map(
+      function(host) {
+        var url =
+          host +
+          "/wefeed-h5-bff/web/subject/caption" +
+          "?format=" +
+          encodeURIComponent(seed.format) +
+          "&id=" +
+          encodeURIComponent(seed.id) +
+          "&subjectId=" +
+          encodeURIComponent(
+            playResult.subjectId
+          );
 
-      return fetchJson(
-        url,
-        { headers: { "Referer": host + "/" } },
-        1900,
-        "MovieBox captions " + host
-      ).then(function(payload) {
-        var data =
-          payload && payload.data && typeof payload.data === "object"
-            ? payload.data
-            : {};
+        return fetchJson(
+          url,
+          {
+            headers: {
+              "Referer": host + "/"
+            }
+          },
+          800,
+          "MovieBox caption " + host
+        ).then(function(payload) {
+          var data =
+            payload &&
+            payload.data &&
+            typeof payload.data === "object"
+              ? payload.data
+              : {};
 
-        var captions = Array.isArray(data.captions)
-          ? data.captions
-          : [];
+          var captions =
+            Array.isArray(data.captions)
+              ? data.captions
+              : [];
 
-        var usable = captions.filter(function(caption) {
-          return caption && caption.url && subtitleLanguage(caption);
+          var usable =
+            captions.filter(
+              function(caption) {
+                return (
+                  caption &&
+                  caption.url &&
+                  subtitleLanguage(caption)
+                );
+              }
+            );
+
+          return usable.length
+            ? usable
+            : null;
         });
-
-        return usable.length ? usable : null;
-      });
-    }),
-    CAPTION_RACE_MS,
-    "captions"
+      }
+    ),
+    CAPTION_RACE_MS
   ).then(function(result) {
     return result || [];
   });
 }
 
-function buildH5Streams(playResult, captions, info, mediaType, season, episode) {
-  var subtitles = [];
-  var subtitleSeen = {};
+function qualityNumber(value) {
+  var text =
+    String(value || "")
+      .toLowerCase();
 
-  captions.forEach(function(caption) {
-    var url = String(caption.url || "").trim();
-    var language = subtitleLanguage(caption);
+  if (text.indexOf("4k") !== -1) {
+    return 2160;
+  }
 
-    if (!url || !language || subtitleSeen[url]) return;
-    subtitleSeen[url] = true;
+  var match =
+    text.match(/(\d{3,4})/);
 
-    subtitles.push({
-      label: language.label,
-      language: language.label,
-      lang: language.code,
-      url: url,
-      default: false,
-      format:
-        url.toLowerCase().indexOf(".srt") !== -1
-          ? "srt"
-          : url.toLowerCase().indexOf(".vtt") !== -1
-            ? "vtt"
-            : ""
-    });
-  });
+  return match
+    ? Number(match[1]) || 0
+    : 0;
+}
+
+function inferQuality(
+  url,
+  label
+) {
+  var value =
+    (
+      String(label || "") +
+      " " +
+      String(url || "")
+    ).toLowerCase();
+
+  var q =
+    qualityNumber(value);
+
+  return q
+    ? q + "p"
+    : "Auto";
+}
+
+function sanitiseHeaders(
+  input,
+  fallbackReferer
+) {
+  var source =
+    input &&
+    typeof input === "object"
+      ? input
+      : {};
+
+  var output = {};
+
+  Object.keys(source).forEach(
+    function(key) {
+      var lower =
+        String(key || "")
+          .toLowerCase();
+
+      if (
+        lower === "host" ||
+        lower === "connection" ||
+        lower === "content-length" ||
+        lower === "accept-encoding" ||
+        lower === "range" ||
+        lower === "origin" ||
+        lower.indexOf("sec-fetch-") === 0
+      ) {
+        return;
+      }
+
+      output[key] =
+        String(source[key]);
+    }
+  );
+
+  output["User-Agent"] =
+    output["User-Agent"] ||
+    output["user-agent"] ||
+    USER_AGENT;
+
+  var capturedReferer =
+    output["Referer"] ||
+    output["referer"] ||
+    "";
+
+  delete output["referer"];
+
+  output["Referer"] =
+    capturedReferer ||
+    fallbackReferer;
+
+  return output;
+}
+
+function buildSubtitleFiles(captions) {
+  var seen = {};
+
+  return (captions || [])
+    .map(function(caption) {
+      var url =
+        String(
+          caption &&
+          caption.url ||
+          ""
+        ).trim();
+
+      var language =
+        subtitleLanguage(caption);
+
+      if (
+        !url ||
+        !language ||
+        seen[url]
+      ) {
+        return null;
+      }
+
+      seen[url] = true;
+
+      return {
+        label: language.label,
+        language: language.label,
+        lang: language.code,
+        url: url,
+        default: false,
+        format:
+          url.toLowerCase().indexOf(".srt") !== -1
+            ? "srt"
+            : url.toLowerCase().indexOf(".vtt") !== -1
+              ? "vtt"
+              : ""
+      };
+    })
+    .filter(Boolean);
+}
+
+function buildH5Output(
+  playResult,
+  captions,
+  info,
+  mediaType,
+  season,
+  episode
+) {
+  var subtitles =
+    buildSubtitleFiles(captions);
 
   var suffix =
     mediaType === "tv"
@@ -780,73 +1068,165 @@ function buildH5Streams(playResult, captions, info, mediaType, season, episode) 
   return playResult.streams
     .slice()
     .sort(function(a, b) {
-      var qa = parseInt(String(a && a.resolutions || ""), 10) || 0;
-      var qb = parseInt(String(b && b.resolutions || ""), 10) || 0;
-      return qb - qa;
-    })
-    .map(function(source) {
-      var url = String(source && source.url || "").trim();
-      if (!url || seen[url]) return null;
-      seen[url] = true;
-
-      var quality = inferQuality(
-        url,
-        source && (
-          source.resolutions ||
-          source.resolution ||
-          source.quality
+      return (
+        qualityNumber(
+          b && b.resolutions
+        ) -
+        qualityNumber(
+          a && a.resolutions
         )
       );
+    })
+    .map(function(source) {
+      var url =
+        String(
+          source &&
+          source.url ||
+          ""
+        ).trim();
+
+      if (
+        !url ||
+        seen[url]
+      ) {
+        return null;
+      }
+
+      seen[url] = true;
+
+      var quality =
+        inferQuality(
+          url,
+          source &&
+          (
+            source.resolutions ||
+            source.resolution ||
+            source.quality
+          )
+        );
 
       return {
-        name: PROVIDER_NAME + " " + quality,
-        title: (info.title || PROVIDER_NAME) + suffix,
+        name:
+          PROVIDER_NAME +
+          " " +
+          quality,
+        title:
+          (info.title || PROVIDER_NAME) +
+          suffix,
         url: url,
         quality: quality,
         type: "direct",
         subtitles: subtitles,
         headers: {
           "User-Agent": USER_AGENT,
-          "Referer": playResult.host + "/"
+          "Referer":
+            playResult.host + "/"
         }
       };
     })
     .filter(Boolean);
 }
 
-function resolveH5Fallback(info, mediaType, season, episode) {
-  return searchBestCandidate(info, mediaType)
+function resolveH5(
+  info,
+  mediaType,
+  season,
+  episode
+) {
+  var selectedItem;
+  var selectedHost;
+
+  return searchH5(
+    info,
+    mediaType
+  )
     .then(function(match) {
       if (!match) {
-        throw new Error("MovieBox H5 search found no usable candidate");
+        throw new Error(
+          "MovieBox H5 mirrors returned no matching title"
+        );
       }
 
+      selectedItem =
+        Object.assign(
+          {},
+          match.item
+        );
+
+      selectedHost =
+        match.host;
+
+      preferredWebHost =
+        match.host;
+
       console.log(
-        "[MovieBox] H5 match host=" +
+        "[MovieBox] H5 selected host=" +
         match.host +
         " title=" +
-        match.item.title +
+        selectedItem.title +
         " score=" +
         match.score
       );
 
+      if (
+        selectedItem.detailPath ||
+        selectedItem.detail_path
+      ) {
+        return null;
+      }
+
+      return raceDetailHosts(
+        selectedItem.subjectId,
+        selectedHost
+      );
+    })
+    .then(function(detail) {
+      if (
+        detail &&
+        detail.subject
+      ) {
+        selectedItem =
+          Object.assign(
+            {},
+            selectedItem,
+            detail.subject
+          );
+
+        selectedHost =
+          detail.host;
+
+        preferredWebHost =
+          detail.host;
+      }
+
       return racePlayHosts(
-        match.item,
+        selectedItem,
         mediaType,
         season,
         episode,
-        match.host
+        selectedHost
       );
     })
     .then(function(playResult) {
       if (!playResult) {
-        throw new Error("MovieBox H5 returned no playable streams");
+        throw new Error(
+          "MovieBox H5 returned no playable streams"
+        );
       }
 
-      return raceCaptions(playResult)
-        .catch(function() { return []; })
+      /*
+       * Streams are the critical path. Caption lookup is intentionally capped
+       * below one second so it cannot turn a valid MovieBox source into a
+       * health-check timeout.
+       */
+      return loadCaptions(
+        playResult
+      )
+        .catch(function() {
+          return [];
+        })
         .then(function(captions) {
-          return buildH5Streams(
+          return buildH5Output(
             playResult,
             captions,
             info,
@@ -855,13 +1235,258 @@ function resolveH5Fallback(info, mediaType, season, episode) {
             episode
           );
         });
+    })
+    .catch(function(error) {
+      console.log(
+        "[MovieBox] H5 path failed: " +
+        (
+          error &&
+          error.message
+            ? error.message
+            : String(error)
+        )
+      );
+
+      return [];
     });
 }
 
-function getStreams(tmdbId, mediaType, season, episode) {
-  var type = mediaType === "tv" ? "tv" : "movie";
-  var requestedSeason = Math.max(1, Number(season || 1));
-  var requestedEpisode = Math.max(1, Number(episode || 1));
+function nativeWebViewAvailable() {
+  return (
+    typeof globalThis !== "undefined" &&
+    typeof globalThis.webviewResolve === "function"
+  );
+}
+
+function resolveMovieBoxWebsite(
+  info,
+  mediaType,
+  season,
+  episode
+) {
+  if (!nativeWebViewAvailable()) {
+    return Promise.resolve([]);
+  }
+
+  var interactions = [];
+
+  if (mediaType === "tv") {
+    interactions.push(
+      "season " + Number(season || 1),
+      "episode " + Number(episode || 1),
+      "ep " + Number(episode || 1)
+    );
+  }
+
+  interactions = interactions.concat([
+    "watch online",
+    "watch",
+    "play",
+    "continue",
+    "skip ad",
+    "skip",
+    "close ad",
+    "close"
+  ]);
+
+  console.log(
+    "[MovieBox] Native website search=" +
+    info.title
+  );
+
+  return globalThis.webviewResolve(
+    MOVIEBOX_WEB + "/",
+    {
+      referer:
+        MOVIEBOX_WEB + "/",
+      directLoad: true,
+      searchText:
+        info.title,
+      timeoutMs:
+        WEBVIEW_BUDGET_MS,
+      finishAfterFirstMs: 550,
+      suppressPopups: true,
+      lockMainFrameHost: true,
+      interactionTexts:
+        interactions,
+      clickDelaysMs: [
+        550,
+        1100,
+        1800,
+        2700,
+        3900,
+        5300,
+        7000,
+        9000,
+        11200,
+        13400
+      ],
+      match: [
+        ".m3u8",
+        ".mp4",
+        ".m4v",
+        "/sora/"
+      ],
+      blocked: [
+        "doubleclick",
+        "googlesyndication",
+        "/vast"
+      ],
+      injectAbyssHook: true
+    }
+  ).then(function(result) {
+    var captured =
+      result &&
+      Array.isArray(result.streams)
+        ? result.streams
+        : [];
+
+    var seen = {};
+
+    var output =
+      captured
+        .filter(function(item) {
+          var url =
+            String(
+              item &&
+              item.url ||
+              ""
+            ).toLowerCase();
+
+          return (
+            url.indexOf(".m3u8") !== -1 ||
+            url.indexOf(".mp4") !== -1 ||
+            url.indexOf(".m4v") !== -1 ||
+            url.indexOf("/sora/") !== -1
+          );
+        })
+        .filter(function(item) {
+          var url =
+            String(item.url);
+
+          if (seen[url]) {
+            return false;
+          }
+
+          seen[url] = true;
+          return true;
+        })
+        .map(function(item, index) {
+          var url =
+            String(item.url);
+
+          var suffix =
+            mediaType === "tv"
+              ? " S" +
+                String(
+                  season || 1
+                ).padStart(2, "0") +
+                "E" +
+                String(
+                  episode || 1
+                ).padStart(2, "0")
+              : "";
+
+          var capturedReferer =
+            item.headers &&
+            (
+              item.headers.Referer ||
+              item.headers.referer
+            );
+
+          return {
+            name:
+              PROVIDER_NAME +
+              " Web" +
+              (
+                index
+                  ? " " + (index + 1)
+                  : ""
+              ),
+            title:
+              (info.title || PROVIDER_NAME) +
+              suffix,
+            url: url,
+            quality:
+              inferQuality(
+                url,
+                item.label
+              ),
+            type: "direct",
+            subtitles: [],
+            headers:
+              sanitiseHeaders(
+                item.headers,
+                capturedReferer ||
+                  MOVIEBOX_WEB + "/"
+              )
+          };
+        });
+
+    output.sort(function(a, b) {
+      var ai =
+        String(a.url).indexOf("/sora/") !== -1
+          ? 1
+          : 0;
+
+      var bi =
+        String(b.url).indexOf("/sora/") !== -1
+          ? 1
+          : 0;
+
+      if (ai !== bi) {
+        return ai - bi;
+      }
+
+      return (
+        qualityNumber(b.quality) -
+        qualityNumber(a.quality)
+      );
+    });
+
+    console.log(
+      "[MovieBox] Native website streams=" +
+      output.length
+    );
+
+    return output;
+  }).catch(function(error) {
+    console.log(
+      "[MovieBox] Native website failed: " +
+      (
+        error &&
+        error.message
+          ? error.message
+          : String(error)
+      )
+    );
+
+    return [];
+  });
+}
+
+function getStreams(
+  tmdbId,
+  mediaType,
+  season,
+  episode
+) {
+  var type =
+    mediaType === "tv"
+      ? "tv"
+      : "movie";
+
+  var requestedSeason =
+    Math.max(
+      1,
+      Number(season || 1)
+    );
+
+  var requestedEpisode =
+    Math.max(
+      1,
+      Number(episode || 1)
+    );
 
   console.log(
     "[MovieBox] Request tmdbId=" +
@@ -870,42 +1495,54 @@ function getStreams(tmdbId, mediaType, season, episode) {
     type +
     (
       type === "tv"
-        ? " S" + requestedSeason + "E" + requestedEpisode
+        ? " S" +
+          requestedSeason +
+          "E" +
+          requestedEpisode
         : ""
     )
   );
 
-  var info;
+  var work =
+    getTmdbInfo(
+      tmdbId,
+      type
+    )
+      .then(function(info) {
+        if (!info.title) {
+          throw new Error(
+            "TMDB title is empty"
+          );
+        }
 
-  var work = getTmdbInfo(tmdbId, type)
-    .then(function(value) {
-      info = value;
-
-      /*
-       * Current MovieBox web pages use TMDB IDs directly and their primary
-       * "Zen" server is VideoEasy. This avoids the H5 search bottleneck.
-       */
-      return resolveCurrentMovieBoxPlayer(
-        tmdbId,
-        type,
-        requestedSeason,
-        requestedEpisode
-      );
-    })
-    .then(function(streams) {
-      if (streams && streams.length) {
-        return streams;
-      }
-
-      console.log("[MovieBox] Current player empty, falling back to H5 API");
-
-      return resolveH5Fallback(
-        info,
-        type,
-        requestedSeason,
-        requestedEpisode
-      );
-    });
+        /*
+         * Both are real MovieBox paths:
+         *
+         * 1. The current public MovieBox website itself.
+         * 2. The H5 API path used by the supplied Cloudstream provider.
+         *
+         * Run them concurrently. A blocked H5 API can no longer consume the
+         * entire provider timeout before the website is attempted, and a slow
+         * website cannot prevent the structured API from winning.
+         */
+        return firstNonEmptyStreams(
+          [
+            resolveMovieBoxWebsite(
+              info,
+              type,
+              requestedSeason,
+              requestedEpisode
+            ),
+            resolveH5(
+              info,
+              type,
+              requestedSeason,
+              requestedEpisode
+            )
+          ],
+          18000
+        );
+      });
 
   return withSoftTimeout(
     work,
@@ -914,8 +1551,14 @@ function getStreams(tmdbId, mediaType, season, episode) {
   ).catch(function(error) {
     console.error(
       "[MovieBox] " +
-      (error && error.message ? error.message : String(error))
+      (
+        error &&
+        error.message
+          ? error.message
+          : String(error)
+      )
     );
+
     return [];
   });
 }

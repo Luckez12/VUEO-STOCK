@@ -1,6 +1,6 @@
 {
   "name": "VUEO Stock",
-  "version": "1.9.1",
+  "version": "1.9.2",
   "scrapers": [
     {
       "id": "kisskh",
@@ -128,7 +128,7 @@
       "id": "moviebox",
       "name": "MovieBox",
       "description": "Movie and TV streams from the current MovieBox H5 web API mirror pool",
-      "version": "2.1.0",
+      "version": "2.2.0",
       "author": "Luckez",
       "supportedTypes": [
         "movie",
@@ -150,7 +150,7 @@
       "disabledPlatforms": [],
       "supportsExternalPlayer": true,
       "runtimeTimeoutMs": 20000,
-      "notes": "Current MovieBox fast path. Uses the active MovieBox web player's direct TMDB-based VideoEasy URL first, then falls back to the Cloudstream H5 mirror API. Removes the previous strict confidence gate that could reject valid search results."
+      "notes": "Dual-path MovieBox resolver. Races the real MovieBox website UI through VUEO native WebView against the Cloudstream H5 API. H5 search aggregates all four mirrors before title selection instead of trusting the first mirror that returns arbitrary items. No speculative VideoEasy shortcut."
     },
     {
       "id": "moviesmod",
