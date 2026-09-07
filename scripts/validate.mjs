@@ -24,6 +24,15 @@ if (!/^\d+\.\d+\.\d+$/.test(manifest.version || '')) fail('manifest.version must
 if (!Array.isArray(manifest.scrapers)) fail('manifest.scrapers must be an array');
 
 const ids = new Set();
+const filenames = new Set();
+const providerDir = path.join(root, 'providers');
+const actualProviderFiles = fs.existsSync(providerDir)
+  ? fs.readdirSync(providerDir)
+      .filter(name => name.endsWith('.js') && name !== '_template.js')
+      .map(name => `providers/${name}`)
+      .sort()
+  : [];
+
 const requiredFields = [
   'id', 'name', 'description', 'version', 'author',
   'supportedTypes', 'filename', 'enabled'
@@ -52,6 +61,11 @@ for (const scraper of manifest.scrapers) {
   if (!scraper.filename.startsWith('providers/') || !scraper.filename.endsWith('.js')) {
     fail(`Invalid filename for ${scraper.id}`);
   }
+
+  if (filenames.has(scraper.filename)) {
+    fail(`Duplicate provider filename: ${scraper.filename}`);
+  }
+  filenames.add(scraper.filename);
 
   const providerPath = path.join(root, scraper.filename);
   if (!fs.existsSync(providerPath)) fail(`Missing ${scraper.filename}`);
@@ -92,6 +106,20 @@ for (const scraper of manifest.scrapers) {
 
   if (typeof moduleObject.exports.getStreams !== 'function') {
     fail(`${scraper.filename} must export getStreams`);
+  }
+}
+
+const manifestFiles = [...filenames].sort();
+
+for (const providerFile of actualProviderFiles) {
+  if (!filenames.has(providerFile)) {
+    fail(`Provider file is not listed in manifest: ${providerFile}`);
+  }
+}
+
+for (const manifestFile of manifestFiles) {
+  if (!actualProviderFiles.includes(manifestFile)) {
+    fail(`Manifest references missing provider file: ${manifestFile}`);
   }
 }
 
