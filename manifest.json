@@ -1,6 +1,6 @@
 {
   "name": "VUEO Stock",
-  "version": "1.9.5",
+  "version": "1.9.6",
   "scrapers": [
     {
       "id": "kisskh",
@@ -77,7 +77,7 @@
       "id": "moviebox",
       "name": "MovieBox",
       "description": "Movie and TV streams from the current MovieBox H5 web API mirror pool",
-      "version": "2.4.0",
+      "version": "2.5.0",
       "author": "Luckez",
       "supportedTypes": [
         "movie",
@@ -99,7 +99,7 @@
       "disabledPlatforms": [],
       "supportsExternalPlayer": true,
       "runtimeTimeoutMs": 20000,
-      "notes": "Direct current MovieBox watch-page resolver. Removes TMDB and H5 search from the critical path because MovieBox watch URLs already use the TMDB ID passed by VUEO. Movies open /watch/movie/<id>/ directly. TV opens /watch/tv/<id>/ and selects season/episode through native WebView interaction."
+      "notes": "Nuvio H5 resolver is now the primary MovieBox path. It resolves TMDB metadata, searches MovieBox mirrors, merges unique streams from every successful H5 mirror, preserves each stream's originating playback Referer, merges EN/MS/ID captions, and falls back to native WebView only when H5 yields no playable source."
     },
     {
       "id": "4khdhub",
