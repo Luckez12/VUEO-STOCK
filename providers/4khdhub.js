@@ -7,9 +7,12 @@ console.log('[4KHDHub] Using cheerio-without-node-native for DOM parsing');
 // Constants
 const TMDB_API_KEY = '439c478a771f35c05022f9feabcca01c';
 const DOMAINS_URL = 'https://raw.githubusercontent.com/phisher98/TVVVV/refs/heads/main/domains.json';
+const FALLBACK_4KHDHUB_URL = 'https://4khdhub.one';
+const REQUEST_TIMEOUT_MS = 4500;
+const PROVIDER_BUDGET_MS = 18500;
 
-// Disable URL validation for faster results
-global.DISABLE_4KHDHUB_URL_VALIDATION = true;
+// Direct file validation is disabled by default for Nuvio latency.
+const URL_VALIDATION_ENABLED = false;
 
 // Caches (in-memory only)
 let domainsCache = null;
@@ -41,20 +44,130 @@ if (typeof btoa === 'undefined') {
   }
 }
 
+function withSoftTimeout(promise, timeoutMs, label) {
+  return new Promise(function (resolve, reject) {
+    var settled = false;
+    var timer = setTimeout(function () {
+      if (settled) return;
+      settled = true;
+      reject(new Error((label || '4KHDHub request') + ' timed out'));
+    }, Math.max(1, Number(timeoutMs || 1)));
+
+    Promise.resolve(promise).then(
+      function (value) {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(value);
+      },
+      function (error) {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        reject(error);
+      }
+    );
+  });
+}
+
+function collectValuesBounded(factories, concurrency, timeoutMs) {
+  var jobs = Array.isArray(factories) ? factories : [];
+  if (!jobs.length) return Promise.resolve([]);
+
+  var limit = Math.max(1, Number(concurrency || 1));
+
+  return new Promise(function (resolve) {
+    var output = [];
+    var next = 0;
+    var active = 0;
+    var done = false;
+
+    var timer = setTimeout(
+      finish,
+      Math.max(1, Number(timeoutMs || 1))
+    );
+
+    function finish() {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      resolve(output);
+    }
+
+    function pump() {
+      if (done) return;
+
+      if (next >= jobs.length && active === 0) {
+        finish();
+        return;
+      }
+
+      while (!done && active < limit && next < jobs.length) {
+        var factory = jobs[next++];
+        active += 1;
+
+        Promise.resolve()
+          .then(factory)
+          .then(function (value) {
+            if (!done && value !== undefined && value !== null) {
+              output.push(value);
+            }
+          })
+          .catch(function () {})
+          .then(function () {
+            active -= 1;
+            pump();
+          });
+      }
+    }
+
+    pump();
+  });
+}
+
+function flattenUniqueStreams(groups) {
+  var seen = {};
+  var output = [];
+
+  (groups || []).forEach(function (group) {
+    (Array.isArray(group) ? group : []).forEach(function (item) {
+      if (!item || !item.url || seen[item.url]) return;
+      seen[item.url] = true;
+      output.push(item);
+    });
+  });
+
+  return output;
+}
+
 // Helper: HTTP
 function makeRequest(url, options = {}) {
-  return fetch(url, {
+  var requestOptions = {
     ...options,
     headers: {
       ...DEFAULT_HEADERS,
       ...(options.headers || {})
     }
-  }).then(function (response) {
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-    }
-    return response;
-  });
+  };
+
+  var timeoutMs =
+    Number(
+      requestOptions.timeoutMs ||
+      REQUEST_TIMEOUT_MS
+    );
+
+  delete requestOptions.timeoutMs;
+
+  return withSoftTimeout(
+    fetch(url, requestOptions).then(function (response) {
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      return response;
+    }),
+    timeoutMs,
+    '4KHDHub HTTP'
+  );
 }
 
 // Base64 and misc helpers (RN-safe)
@@ -160,7 +273,7 @@ function calculateSimilarity(str1, str2) {
   return (maxLen - matrix[len1][len2]) / maxLen;
 }
 
-function findBestMatch(results, query, targetYear) {
+function findBestMatch(results, query, targetYear, mediaType) {
   if (!results || results.length === 0) return null;
   if (results.length === 1) return results[0];
   var scored = results.map(function (r) {
@@ -171,6 +284,19 @@ function findBestMatch(results, query, targetYear) {
     var lengthDiff = Math.abs(r.title.length - query.length);
     score += Math.max(0, 10 - lengthDiff / 5);
     if (/(19|20)\d{2}/.test(r.title)) score += 5;
+
+    var path = String(r.url || '').toLowerCase();
+    var resultType =
+      path.indexOf('-movie-') !== -1
+        ? 'movie'
+        : path.indexOf('-series-') !== -1
+          ? 'tv'
+          : '';
+
+    if (resultType && mediaType) {
+      if (resultType === mediaType) score += 80;
+      else score -= 140;
+    }
 
     // Year awareness: prefer results matching TMDB year
     var rYear = null;
@@ -255,10 +381,37 @@ function getFilenameFromUrl(url) {
 // Domains
 function getDomains() {
   if (domainsCache) return Promise.resolve(domainsCache);
-  return makeRequest(DOMAINS_URL).then(function (res) { return res.json(); }).then(function (data) {
-    domainsCache = data;
-    return domainsCache;
-  }).catch(function () { return null; });
+
+  return makeRequest(
+    DOMAINS_URL,
+    { timeoutMs: 2800 }
+  )
+    .then(function (res) {
+      return res.json();
+    })
+    .then(function (data) {
+      var value =
+        data &&
+        String(data['4khdhub'] || '').trim();
+
+      domainsCache =
+        Object.assign(
+          {},
+          data || {},
+          {
+            '4khdhub':
+              value || FALLBACK_4KHDHUB_URL
+          }
+        );
+
+      return domainsCache;
+    })
+    .catch(function () {
+      domainsCache = {
+        '4khdhub': FALLBACK_4KHDHUB_URL
+      };
+      return domainsCache;
+    });
 }
 
 // Resolve redirect link style used by 4KHDHub
@@ -291,8 +444,7 @@ function getRedirectLinks(url) {
 // Search content
 function searchContent(query) {
   return getDomains().then(function (domains) {
-    if (!domains || !domains['4khdhub']) throw new Error('Failed to get domain information');
-    var baseUrl = domains['4khdhub'];
+    var baseUrl = domains && domains['4khdhub'] ? domains['4khdhub'] : FALLBACK_4KHDHUB_URL;
     var searchUrl = baseUrl + '/?s=' + encodeURIComponent(query);
     return makeRequest(searchUrl).then(function (res) { return res.text(); }).then(function (html) {
       var $ = cheerio.load(html);
@@ -376,7 +528,7 @@ function loadContent(url) {
         var h = ($(el).attr('href') || '').trim();
         if (!h) return;
         // Keep only plausible download/intermediate links
-        var keep = /hubdrive|hubcloud|pixeldrain|buzz|10gbps|workers\.dev|r2\.dev|id=|download|s3|fsl/i.test(h);
+        var keep = /hubdrive|hubcloud|hubcdn|hblinks|hdstream4u|hubstream|pixeldrain|buzz|10gbps|workers\.dev|r2\.dev|id=|download|s3|fsl/i.test(h);
         if (keep) hrefsSet.add(h);
       });
     }
@@ -411,6 +563,53 @@ function loadContent(url) {
         }
       });
     });
+
+    if (Object.keys(episodesMap).length === 0) {
+      $('div.download-item').each(function (i, block) {
+        var $block = $(block);
+        var match =
+          $block.text().match(
+            /\bS(\d{1,2})E(\d{1,3})\b/i
+          );
+
+        if (!match) return;
+
+        var seasonNum =
+          parseInt(match[1], 10);
+
+        var episodeNum =
+          parseInt(match[2], 10);
+
+        if (!seasonNum || !episodeNum) return;
+
+        var epLinks = [];
+
+        $block.find('a[href]').each(function (j, anchor) {
+          var href =
+            ($(anchor).attr('href') || '').trim();
+
+          if (href) epLinks.push(href);
+        });
+
+        if (!epLinks.length) return;
+
+        var key =
+          seasonNum + '-' + episodeNum;
+
+        if (!episodesMap[key]) {
+          episodesMap[key] = {
+            season: seasonNum,
+            episode: episodeNum,
+            downloadLinks: []
+          };
+        }
+
+        episodesMap[key].downloadLinks =
+          episodesMap[key].downloadLinks.concat(
+            epLinks
+          );
+      });
+    }
 
     var episodes = Object.keys(episodesMap).map(function (k) {
       var ep = episodesMap[k];
@@ -575,7 +774,7 @@ function extractHubCloudLinks(url, referer) {
             if (!link) return;
             link = toAbsolute(link, href);
             // Only consider plausible buttons
-            if (!/(hubcloud|hubdrive|pixeldrain|buzz|10gbps|workers\.dev|r2\.dev|download|api\/file)/i.test(link) && text.toLowerCase().indexOf('download') === -1) return;
+            if (!/(hubcloud|hubdrive|hubcdn|hblinks|hdstream4u|hubstream|pixeldrain|buzz|10gbps|workers\.dev|r2\.dev|download|api\/file)/i.test(link) && text.toLowerCase().indexOf('download') === -1) return;
             tasks.push(buildTask(text, link, headerDetails, size, quality));
           });
         });
@@ -605,109 +804,557 @@ function extractHubCloudLinks(url, referer) {
       }
 
       if (tasks.length === 0) return [];
-      return Promise.all(tasks).then(function (arr) { return (arr || []).filter(function (x) { return !!x; }); });
+
+      return collectValuesBounded(
+        tasks.map(function (task) {
+          return function () {
+            return task;
+          };
+        }),
+        3,
+        7200
+      ).then(function (arr) {
+        return (arr || []).filter(function (x) {
+          return !!x;
+        });
+      });
     });
   }).catch(function () { return []; });
 }
 
 // Extract HubDrive links (wrapper around HubCloud if needed)
-function extractHubDriveLinks(url, referer) {
-  return makeRequest(url).then(function (res) { return res.text(); }).then(function (html) {
-    var $ = cheerio.load(html);
-    var size = $('i#size').text() || '';
-    var header = $('div.card-header').text() || '';
-    var quality = getIndexQuality(header);
-    var headerDetails = cleanTitle(header);
-    var filename = (headerDetails || header || 'Unknown').replace(/^4kHDHub\.com\s*[-_]?\s*/i, '').replace(/\.[a-z0-9]{2,4}$/i, '').replace(/[._]/g, ' ').trim();
-    var primaryBtn = $('.btn.btn-primary.btn-user.btn-success1.m-1').attr('href') || $('a.btn.btn-primary').attr('href') || $('a[href*="download"]').attr('href') || $('a.btn').attr('href');
-    if (!primaryBtn) return [];
-    if ((primaryBtn || '').toLowerCase().indexOf('hubcloud') !== -1) {
-      return extractHubCloudLinks(primaryBtn, '4KHDHub');
+function extractHubDriveLinks(url, referer, depth) {
+  return makeRequest(
+    url,
+    {
+      headers: {
+        'Referer':
+          referer || FALLBACK_4KHDHUB_URL + '/'
+      },
+      timeoutMs: 4200
     }
-    var qualityLabel = quality ? (' - ' + quality + 'p') : '';
-    return getFilenameFromUrl(primaryBtn).then(function (actualFilename) {
-      var displayFilename = actualFilename || filename || 'Unknown';
-      var titleParts = [];
-      if (displayFilename) titleParts.push(displayFilename);
-      if (size) titleParts.push(size);
-      var finalTitle = titleParts.join('\n');
-      return [{ name: '4KHDHub - HubDrive' + qualityLabel, title: finalTitle, url: primaryBtn, quality: quality }];
-    }).catch(function () {
-      var displayFilename = filename || 'Unknown';
-      var titleParts = [];
-      if (displayFilename) titleParts.push(displayFilename);
-      if (size) titleParts.push(size);
-      var finalTitle = titleParts.join('\n');
-      return [{ name: '4KHDHub - HubDrive' + qualityLabel, title: finalTitle, url: primaryBtn, quality: quality }];
+  )
+    .then(function (res) {
+      return res.text();
+    })
+    .then(function (html) {
+      var $ = cheerio.load(html);
+      var candidates = [];
+      var seen = {};
+
+      function add(raw) {
+        var value = String(raw || '').trim();
+        if (!value) return;
+
+        try {
+          value = new URL(value, url).toString();
+        } catch (e) {}
+
+        if (
+          !/^https?:\/\//i.test(value) ||
+          value === url ||
+          seen[value]
+        ) {
+          return;
+        }
+
+        if (
+          !/(hubcloud|hubdrive|hubcdn|hblinks|hdstream4u|hubstream|pixeldrain|workers\.dev|r2\.dev|buzz|10gbps|download|api\/file|\.(?:m3u8|mp4|m4v|mkv)(?:$|[?#]))/i.test(value)
+        ) {
+          return;
+        }
+
+        seen[value] = true;
+        candidates.push(value);
+      }
+
+      $('a[href]').each(function (i, anchor) {
+        add($(anchor).attr('href'));
+      });
+
+      var normalized =
+        String(html || '').replace(/\\\//g, '/');
+
+      var urlRegex =
+        /https?:\/\/[^\s"'<>\\]+/gi;
+
+      var match;
+      while ((match = urlRegex.exec(normalized))) {
+        add(match[0]);
+      }
+
+      if (!candidates.length) {
+        return [];
+      }
+
+      return collectValuesBounded(
+        candidates.map(function (candidate) {
+          return function () {
+            return processExtractorLink(
+              candidate,
+              url,
+              Number(depth || 0) + 1
+            ).catch(function () {
+              return [];
+            });
+          };
+        }),
+        3,
+        7200
+      ).then(flattenUniqueStreams);
+    })
+    .catch(function () {
+      return [];
     });
-  }).catch(function () { return []; });
+}
+
+function resolvePotentialMediaUrl(url, referer, label) {
+  return makeRequest(
+    url,
+    {
+      redirect: 'follow',
+      headers: {
+        'Referer':
+          referer || FALLBACK_4KHDHUB_URL + '/',
+        'Range': 'bytes=0-1'
+      },
+      timeoutMs: 3200
+    }
+  )
+    .then(function (response) {
+      var finalUrl =
+        response.url || url;
+
+      var contentType =
+        String(
+          response.headers &&
+          response.headers.get &&
+          response.headers.get('content-type') ||
+          ''
+        ).toLowerCase();
+
+      var playable =
+        /\.(?:m3u8|mp4|m4v|mkv)(?:$|[?#])/i.test(finalUrl) ||
+        contentType.indexOf('video/') === 0 ||
+        contentType.indexOf('application/octet-stream') !== -1 ||
+        contentType.indexOf('application/vnd.apple.mpegurl') !== -1;
+
+      if (!playable) return [];
+
+      return [{
+        name: '4KHDHub - ' + (label || 'Direct'),
+        title: label || '4KHDHub Direct',
+        url: finalUrl,
+        quality: getIndexQuality(finalUrl),
+        headers: {
+          'User-Agent': DEFAULT_HEADERS['User-Agent'],
+          'Referer':
+            referer || FALLBACK_4KHDHUB_URL + '/'
+        }
+      }];
+    })
+    .catch(function () {
+      return [];
+    });
+}
+
+function extractIntermediateLinks(url, referer, depth) {
+  var currentDepth =
+    Number(depth || 0);
+
+  if (currentDepth >= 2) {
+    return Promise.resolve([]);
+  }
+
+  return makeRequest(
+    url,
+    {
+      headers: {
+        'Referer':
+          referer || FALLBACK_4KHDHUB_URL + '/'
+      },
+      timeoutMs: 3800
+    }
+  )
+    .then(function (response) {
+      var finalUrl =
+        response.url || url;
+
+      var contentType =
+        String(
+          response.headers &&
+          response.headers.get &&
+          response.headers.get('content-type') ||
+          ''
+        ).toLowerCase();
+
+      if (
+        /\.(?:m3u8|mp4|m4v|mkv)(?:$|[?#])/i.test(finalUrl) ||
+        contentType.indexOf('video/') === 0 ||
+        contentType.indexOf('application/octet-stream') !== -1
+      ) {
+        return [{
+          name: '4KHDHub Direct Link',
+          title: 'Direct',
+          url: finalUrl,
+          quality: getIndexQuality(finalUrl),
+          headers: {
+            'User-Agent': DEFAULT_HEADERS['User-Agent'],
+            'Referer': referer || url
+          }
+        }];
+      }
+
+      return response.text().then(function (html) {
+        var $ = cheerio.load(html);
+        var candidates = [];
+        var seen = {};
+
+        function add(raw) {
+          var value =
+            String(raw || '').trim();
+
+          if (!value) return;
+
+          try {
+            value =
+              new URL(
+                value,
+                finalUrl
+              ).toString();
+          } catch (e) {}
+
+          if (
+            !/^https?:\/\//i.test(value) ||
+            value === finalUrl ||
+            seen[value]
+          ) {
+            return;
+          }
+
+          if (
+            !/(hubcloud|hubdrive|hubcdn|hblinks|hdstream4u|hubstream|pixeldrain|workers\.dev|r2\.dev|buzz|10gbps|download|api\/file|\.(?:m3u8|mp4|m4v|mkv)(?:$|[?#]))/i.test(value)
+          ) {
+            return;
+          }
+
+          seen[value] = true;
+          candidates.push(value);
+        }
+
+        $('a[href]').each(function (i, anchor) {
+          add($(anchor).attr('href'));
+        });
+
+        var normalized =
+          String(html || '').replace(/\\\//g, '/');
+
+        var regex =
+          /https?:\/\/[^\s"'<>\\]+/gi;
+
+        var match;
+        while ((match = regex.exec(normalized))) {
+          add(match[0]);
+        }
+
+        return collectValuesBounded(
+          candidates.map(function (candidate) {
+            return function () {
+              return processExtractorLink(
+                candidate,
+                finalUrl,
+                currentDepth + 1
+              ).catch(function () {
+                return [];
+              });
+            };
+          }),
+          3,
+          6500
+        ).then(flattenUniqueStreams);
+      });
+    })
+    .catch(function () {
+      return [];
+    });
 }
 
 // Dispatcher for a single link to final streams
-function processExtractorLink(link) {
-  var lower = (link || '').toLowerCase();
+function processExtractorLink(
+  link,
+  referer,
+  depth
+) {
+  var lower =
+    String(link || '').toLowerCase();
+
+  var currentDepth =
+    Number(depth || 0);
+
   if (lower.indexOf('hubdrive') !== -1) {
-    return extractHubDriveLinks(link, '4KHDHub');
-  } else if (lower.indexOf('hubcloud') !== -1) {
-    return extractHubCloudLinks(link, '4KHDHub');
-  } else if (lower.indexOf('workers.dev') !== -1 || lower.indexOf('r2.dev') !== -1) {
-    // Cloudflare Workers / R2 links – treat as HubCloud direct files
-    return getFilenameFromUrl(link).then(function (actualFilename) {
-      var displayFilename = actualFilename || 'HubCloud File';
-      var titleParts = [];
-      if (displayFilename) titleParts.push(displayFilename);
-      var finalTitle = titleParts.join('\n');
-      return [{ name: '4KHDHub - HubCloud - 1080p', title: finalTitle, url: link, quality: 1080, size: null, fileName: actualFilename || null }];
-    }).catch(function () {
-      return [{ name: '4KHDHub - HubCloud - 1080p', title: 'HubCloud File', url: link, quality: 1080, size: null, fileName: null }];
-    });
-  } else if (lower.indexOf('pixeldrain') !== -1) {
-    // Normalize pixeldrain URLs to API endpoint
-    var converted = link;
-    var m = link.match(/pixeldrain\.(?:net|dev)\/u\/([a-zA-Z0-9]+)/);
-    if (m && m[1]) converted = 'https://pixeldrain.net/api/file/' + m[1];
-    return getFilenameFromUrl(converted).then(function (actualFilename) {
-      var displayFilename = actualFilename || 'Pixeldrain File';
-      var title = displayFilename + '\nPixeldrain';
-      return [{ name: '4KHDHub - Pixeldrain - 1080p', title: title, url: converted, quality: 1080, size: null, fileName: actualFilename || null }];
-    }).catch(function () {
-      var title = 'Pixeldrain File\nPixeldrain';
-      return [{ name: '4KHDHub - Pixeldrain - 1080p', title: title, url: converted, quality: 1080, size: null, fileName: null }];
-    });
-  } else if (/\.m(ov|p4|kv)$|\.avi$/i.test(link)) {
-    // Direct video link
-    var filename = (function () {
-      try { return decodeFilename(new URL(link).pathname.split('/').pop().replace(/\.[^/.]+$/, '').replace(/[._]/g, ' ')); } catch (e) { return 'Direct Link'; }
-    })();
-    return getFilenameFromUrl(link).then(function (actualFilename) {
-      var displayFilename = actualFilename || filename || 'Unknown';
-      return [{ name: '4KHDHub Direct Link', title: displayFilename + '\n[Direct Link]', url: link, quality: 1080, size: null, fileName: actualFilename || null }];
-    }).catch(function () {
-      return [{ name: '4KHDHub Direct Link', title: filename + '\n[Direct Link]', url: link, quality: 1080, size: null, fileName: null }];
+    return extractHubDriveLinks(
+      link,
+      referer || FALLBACK_4KHDHUB_URL + '/',
+      currentDepth
+    );
+  }
+
+  if (lower.indexOf('hubcloud') !== -1) {
+    return extractHubCloudLinks(
+      link,
+      referer || '4KHDHub'
+    ).then(function (items) {
+      return (items || []).map(function (item) {
+        item.headers =
+          item.headers || {
+            'User-Agent': DEFAULT_HEADERS['User-Agent'],
+            'Referer': link
+          };
+        return item;
+      });
     });
   }
+
+  if (
+    lower.indexOf('hubcdn.fans') !== -1 ||
+    lower.indexOf('hubcdn') !== -1
+  ) {
+    return resolvePotentialMediaUrl(
+      link,
+      referer,
+      'HubCDN'
+    ).then(function (items) {
+      if (items.length) return items;
+
+      return extractIntermediateLinks(
+        link,
+        referer,
+        currentDepth
+      );
+    });
+  }
+
+  if (
+    lower.indexOf('hblinks') !== -1 ||
+    lower.indexOf('hdstream4u') !== -1 ||
+    lower.indexOf('hubstream') !== -1
+  ) {
+    return extractIntermediateLinks(
+      link,
+      referer,
+      currentDepth
+    );
+  }
+
+  if (
+    lower.indexOf('workers.dev') !== -1 ||
+    lower.indexOf('r2.dev') !== -1
+  ) {
+    return getFilenameFromUrl(link)
+      .then(function (actualFilename) {
+        var displayFilename =
+          actualFilename || 'HubCloud File';
+
+        return [{
+          name: '4KHDHub - HubCloud - 1080p',
+          title: displayFilename,
+          url: link,
+          quality: 1080,
+          size: null,
+          fileName: actualFilename || null,
+          headers: {
+            'User-Agent': DEFAULT_HEADERS['User-Agent'],
+            'Referer':
+              referer || FALLBACK_4KHDHUB_URL + '/'
+          }
+        }];
+      })
+      .catch(function () {
+        return [{
+          name: '4KHDHub - HubCloud - 1080p',
+          title: 'HubCloud File',
+          url: link,
+          quality: 1080,
+          size: null,
+          fileName: null,
+          headers: {
+            'User-Agent': DEFAULT_HEADERS['User-Agent'],
+            'Referer':
+              referer || FALLBACK_4KHDHUB_URL + '/'
+          }
+        }];
+      });
+  }
+
+  if (lower.indexOf('pixeldrain') !== -1) {
+    var converted = link;
+    var m =
+      link.match(
+        /pixeldrain\.(?:net|dev)\/u\/([a-zA-Z0-9]+)/
+      );
+
+    if (m && m[1]) {
+      converted =
+        'https://pixeldrain.net/api/file/' +
+        m[1];
+    }
+
+    return getFilenameFromUrl(converted)
+      .then(function (actualFilename) {
+        var displayFilename =
+          actualFilename || 'Pixeldrain File';
+
+        return [{
+          name: '4KHDHub - Pixeldrain - 1080p',
+          title:
+            displayFilename +
+            '\nPixeldrain',
+          url: converted,
+          quality: 1080,
+          size: null,
+          fileName:
+            actualFilename || null,
+          headers: {
+            'User-Agent': DEFAULT_HEADERS['User-Agent'],
+            'Referer':
+              referer || FALLBACK_4KHDHUB_URL + '/'
+          }
+        }];
+      })
+      .catch(function () {
+        return [{
+          name: '4KHDHub - Pixeldrain - 1080p',
+          title: 'Pixeldrain File\nPixeldrain',
+          url: converted,
+          quality: 1080,
+          size: null,
+          fileName: null,
+          headers: {
+            'User-Agent': DEFAULT_HEADERS['User-Agent'],
+            'Referer':
+              referer || FALLBACK_4KHDHUB_URL + '/'
+          }
+        }];
+      });
+  }
+
+  if (
+    /\.(?:m3u8|mp4|m4v|mkv|avi)(?:$|[?#])/i.test(link)
+  ) {
+    var filename =
+      (function () {
+        try {
+          return decodeFilename(
+            new URL(link)
+              .pathname
+              .split('/')
+              .pop()
+              .replace(/\.[^/.]+$/, '')
+              .replace(/[._]/g, ' ')
+          );
+        } catch (e) {
+          return 'Direct Link';
+        }
+      })();
+
+    return getFilenameFromUrl(link)
+      .then(function (actualFilename) {
+        var displayFilename =
+          actualFilename ||
+          filename ||
+          'Unknown';
+
+        return [{
+          name: '4KHDHub Direct Link',
+          title:
+            displayFilename +
+            '\n[Direct Link]',
+          url: link,
+          quality:
+            getIndexQuality(link),
+          size: null,
+          fileName:
+            actualFilename || null,
+          headers: {
+            'User-Agent': DEFAULT_HEADERS['User-Agent'],
+            'Referer':
+              referer || FALLBACK_4KHDHUB_URL + '/'
+          }
+        }];
+      })
+      .catch(function () {
+        return [{
+          name: '4KHDHub Direct Link',
+          title:
+            filename +
+            '\n[Direct Link]',
+          url: link,
+          quality:
+            getIndexQuality(link),
+          size: null,
+          fileName: null,
+          headers: {
+            'User-Agent': DEFAULT_HEADERS['User-Agent'],
+            'Referer':
+              referer || FALLBACK_4KHDHUB_URL + '/'
+          }
+        }];
+      });
+  }
+
+  if (currentDepth < 2) {
+    return extractIntermediateLinks(
+      link,
+      referer,
+      currentDepth
+    );
+  }
+
   return Promise.resolve([]);
 }
 
 // Convert a list of resolved hosting URLs to final stream entries
-function extractStreamingLinks(downloadLinks) {
-  var tasks = (downloadLinks || []).map(function (lnk) {
-    return processExtractorLink(lnk).then(function (res) { return res || []; }).catch(function () { return []; });
-  });
-  return Promise.all(tasks).then(function (arrs) {
-    var flat = [].concat.apply([], arrs).filter(function (x) { return x && x.url; });
-    // Filter out .zip and suspicious AMP
-    var suspicious = ['www-google-com.cdn.ampproject.org', 'bloggingvector.shop', 'cdn.ampproject.org'];
-    flat = flat.filter(function (x) {
-      var u = (x.url || '').toLowerCase();
-      if (u.endsWith('.zip')) return false;
-      return !suspicious.some(function (p) { return u.indexOf(p) !== -1; });
+function extractStreamingLinks(
+  downloadLinks
+) {
+  return collectValuesBounded(
+    (downloadLinks || []).map(function (lnk) {
+      return function () {
+        return processExtractorLink(
+          lnk,
+          FALLBACK_4KHDHUB_URL + '/',
+          0
+        ).catch(function () {
+          return [];
+        });
+      };
+    }),
+    4,
+    10500
+  ).then(function (groups) {
+    var flat =
+      flattenUniqueStreams(groups);
+
+    var suspicious = [
+      'www-google-com.cdn.ampproject.org',
+      'bloggingvector.shop',
+      'cdn.ampproject.org'
+    ];
+
+    return flat.filter(function (item) {
+      var value =
+        String(item.url || '').toLowerCase();
+
+      if (value.endsWith('.zip')) {
+        return false;
+      }
+
+      return !suspicious.some(
+        function (pattern) {
+          return value.indexOf(pattern) !== -1;
+        }
+      );
     });
-    // Deduplicate by URL
-    var seen = {};
-    var unique = [];
-    flat.forEach(function (x) { if (!seen[x.url]) { seen[x.url] = 1; unique.push(x); } });
-    return unique;
   });
 }
 
@@ -724,70 +1371,362 @@ function getTMDBDetails(tmdbId, mediaType) {
 }
 
 // Main entry – Promise-based, no async/await
-function getStreams(tmdbId, type, season, episode) {
-  type = type || 'movie';
-  var cacheKey = '4khdhub_resolved_urls_v1_' + tmdbId + '_' + type + (season ? ('_s' + season + 'e' + (episode || '')) : '');
-  var disableValidation = ((typeof URL_VALIDATION_ENABLED !== 'undefined') && (URL_VALIDATION_ENABLED === false)) ||
-                          ((typeof DISABLE_4KHDHUB_URL_VALIDATION !== 'undefined') && (DISABLE_4KHDHUB_URL_VALIDATION === true));
+function getStreams(
+  tmdbId,
+  type,
+  season,
+  episode
+) {
+  type =
+    type === 'movie'
+      ? 'movie'
+      : 'tv';
+
+  var requestedSeason =
+    Math.max(
+      1,
+      parseInt(season || 1, 10)
+    );
+
+  var requestedEpisode =
+    Math.max(
+      1,
+      parseInt(episode || 1, 10)
+    );
+
+  var cacheKey =
+    '4khdhub_resolved_urls_v2_' +
+    tmdbId +
+    '_' +
+    type +
+    (
+      type === 'tv'
+        ? '_s' +
+          requestedSeason +
+          'e' +
+          requestedEpisode
+        : ''
+    );
+
+  var disableValidation =
+    URL_VALIDATION_ENABLED === false;
 
   function finalizeToStreams(links) {
-    var tasks = links.map(function (link) { return disableValidation ? Promise.resolve(true) : validateVideoUrl(link.url); });
-    return Promise.all(tasks).then(function (vals) {
-      var validated = links.filter(function (l, idx) { return !!vals[idx]; });
-      return validated.map(function (l) {
-        return {
-          name: l.name,
-          title: l.title || l.name,
-          url: l.url,
-          quality: (l.quality ? (l.quality + 'p') : '1080p'),
-          size: l.size || null,
-          fileName: l.fileName || null,
-          type: 'direct',
-          behaviorHints: { bingeGroup: '4khdhub-streams' }
+    var input =
+      Array.isArray(links)
+        ? links
+        : [];
+
+    var validationFactories =
+      input.map(function (link) {
+        return function () {
+          if (disableValidation) {
+            return Promise.resolve({
+              link: link,
+              ok: true
+            });
+          }
+
+          return validateVideoUrl(
+            link.url
+          ).then(function (ok) {
+            return {
+              link: link,
+              ok: ok
+            };
+          });
         };
       });
+
+    return collectValuesBounded(
+      validationFactories,
+      4,
+      4800
+    ).then(function (results) {
+      return results
+        .filter(function (entry) {
+          return entry && entry.ok && entry.link;
+        })
+        .map(function (entry) {
+          var link =
+            entry.link;
+
+          var qualityNumber =
+            Number(link.quality || 0);
+
+          return {
+            name:
+              link.name ||
+              '4KHDHub',
+            title:
+              link.title ||
+              link.name ||
+              '4KHDHub',
+            url: link.url,
+            quality:
+              qualityNumber
+                ? qualityNumber + 'p'
+                : 'Auto',
+            size:
+              link.size || null,
+            fileName:
+              link.fileName || null,
+            type: 'direct',
+            headers:
+              Object.assign(
+                {
+                  'User-Agent':
+                    DEFAULT_HEADERS['User-Agent']
+                },
+                link.headers || {}
+              ),
+            behaviorHints: {
+              bingeGroup:
+                '4khdhub-streams'
+            }
+          };
+        });
     });
   }
 
-  var cached = resolvedUrlsCache[cacheKey];
+  var cached =
+    resolvedUrlsCache[cacheKey];
+
   if (cached && cached.length > 0) {
-    return extractStreamingLinks(cached).then(function (streams) { return finalizeToStreams(streams); });
+    return withSoftTimeout(
+      extractStreamingLinks(cached)
+        .then(finalizeToStreams),
+      PROVIDER_BUDGET_MS,
+      '4KHDHub cached provider'
+    ).catch(function () {
+      return [];
+    });
   }
 
-  var tmdbType = (type === 'series' ? 'tv' : type);
-  return getTMDBDetails(tmdbId, tmdbType).then(function (tmdb) {
-    if (!tmdb || !tmdb.title) return [];
-    return searchContent(tmdb.title + (tmdb.year ? (' ' + tmdb.year) : '')).then(function (results) {
-      if (!results || results.length === 0) return [];
-      var best = findBestMatch(results, tmdb.title, tmdb.year) || results[0];
-      return loadContent(best.url).then(function (content) {
-        var downloadLinks = [];
-        if (type === 'movie') {
-          downloadLinks = content.downloadLinks || [];
-        } else if ((type === 'series' || type === 'tv') && season && episode) {
-          var target = (content.episodes || []).find(function (ep) { return ep.season === parseInt(season, 10) && ep.episode === parseInt(episode, 10); });
-          downloadLinks = target ? (target.downloadLinks || []) : [];
-        }
-        if (!downloadLinks || downloadLinks.length === 0) return [];
+  var work =
+    getTMDBDetails(
+      tmdbId,
+      type
+    ).then(function (tmdb) {
+      if (!tmdb || !tmdb.title) {
+        return [];
+      }
 
-        // Resolve redirect-style links to file hosts
-        var resolverTasks = downloadLinks.map(function (lnk) {
-          var needs = (lnk || '').toLowerCase().indexOf('id=') !== -1;
-          if (needs) {
-            return getRedirectLinks(lnk).then(function (r) { return r && r.trim() ? r : null; }).catch(function () { return null; });
-          }
-          return Promise.resolve(lnk);
+      var queries = [];
+      var querySeen = {};
+
+      function addQuery(title) {
+        var clean =
+          String(title || '').trim();
+
+        if (!clean) return;
+
+        var key =
+          normalizeTitle(clean);
+
+        if (
+          !key ||
+          querySeen[key]
+        ) {
+          return;
+        }
+
+        querySeen[key] = true;
+
+        queries.push(
+          clean +
+          (
+            tmdb.year
+              ? ' ' + tmdb.year
+              : ''
+          )
+        );
+      }
+
+      addQuery(tmdb.title);
+      addQuery(tmdb.original_title);
+
+      return collectValuesBounded(
+        queries.map(function (query) {
+          return function () {
+            return searchContent(query)
+              .catch(function () {
+                return [];
+              });
+          };
+        }),
+        2,
+        6500
+      ).then(function (groups) {
+        var resultSeen = {};
+        var results = [];
+
+        groups.forEach(function (group) {
+          (Array.isArray(group) ? group : [])
+            .forEach(function (item) {
+              if (
+                !item ||
+                !item.url ||
+                resultSeen[item.url]
+              ) {
+                return;
+              }
+
+              resultSeen[item.url] = true;
+              results.push(item);
+            });
         });
 
-        return Promise.all(resolverTasks).then(function (resolvedArr) {
-          var resolved = resolvedArr.filter(function (x) { return x && x.trim(); });
-          if (resolved.length === 0) return [];
-          resolvedUrlsCache[cacheKey] = resolved; // cache in-memory
-          return extractStreamingLinks(resolved).then(function (links) { return finalizeToStreams(links); });
+        if (!results.length) {
+          return [];
+        }
+
+        var best =
+          findBestMatch(
+            results,
+            tmdb.title,
+            tmdb.year,
+            type
+          ) ||
+          results[0];
+
+        return loadContent(
+          best.url
+        ).then(function (content) {
+          /*
+           * Reject an obvious movie/series mismatch instead of silently
+           * playing a same-name title of the wrong media type.
+           */
+          if (
+            content &&
+            content.type &&
+            (
+              (
+                type === 'movie' &&
+                content.type !== 'movie'
+              ) ||
+              (
+                type === 'tv' &&
+                content.type === 'movie'
+              )
+            )
+          ) {
+            return [];
+          }
+
+          var downloadLinks = [];
+
+          if (type === 'movie') {
+            downloadLinks =
+              content.downloadLinks || [];
+          } else {
+            var target =
+              (content.episodes || [])
+                .find(function (ep) {
+                  return (
+                    ep.season === requestedSeason &&
+                    ep.episode === requestedEpisode
+                  );
+                });
+
+            downloadLinks =
+              target
+                ? target.downloadLinks || []
+                : [];
+          }
+
+          downloadLinks =
+            Array.from(
+              new Set(
+                (downloadLinks || [])
+                  .map(function (value) {
+                    return String(value || '').trim();
+                  })
+                  .filter(Boolean)
+              )
+            );
+
+          if (!downloadLinks.length) {
+            return [];
+          }
+
+          return collectValuesBounded(
+            downloadLinks.map(function (lnk) {
+              return function () {
+                var needs =
+                  String(lnk)
+                    .toLowerCase()
+                    .indexOf('id=') !== -1;
+
+                if (!needs) {
+                  return Promise.resolve(lnk);
+                }
+
+                return getRedirectLinks(
+                  lnk
+                )
+                  .then(function (resolved) {
+                    return (
+                      resolved &&
+                      resolved.trim()
+                        ? resolved.trim()
+                        : null
+                    );
+                  })
+                  .catch(function () {
+                    return null;
+                  });
+              };
+            }),
+            4,
+            6500
+          ).then(function (resolvedArr) {
+            var resolved =
+              resolvedArr
+                .filter(function (value) {
+                  return (
+                    value &&
+                    String(value).trim()
+                  );
+                });
+
+            if (!resolved.length) {
+              return [];
+            }
+
+            resolved =
+              Array.from(
+                new Set(resolved)
+              );
+
+            resolvedUrlsCache[cacheKey] =
+              resolved;
+
+            return extractStreamingLinks(
+              resolved
+            ).then(finalizeToStreams);
+          });
         });
       });
     });
-  }).catch(function () { return []; });
+
+  return withSoftTimeout(
+    work,
+    PROVIDER_BUDGET_MS,
+    '4KHDHub provider'
+  ).catch(function (error) {
+    console.log(
+      '[4KHDHub] ' +
+      (
+        error &&
+        error.message
+          ? error.message
+          : String(error)
+      )
+    );
+
+    return [];
+  });
 }
 
 // Export
