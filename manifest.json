@@ -1,6 +1,6 @@
 {
   "name": "VUEO Stock",
-  "version": "1.11.0",
+  "version": "1.12.0",
   "scrapers": [
     {
       "id": "kisskh",
@@ -64,7 +64,7 @@
       "id": "hdhub4u",
       "name": "HDHub4u",
       "description": "Movie and TV stream provider",
-      "version": "1.2.0",
+      "version": "1.2.2",
       "author": "Luckez",
       "supportedTypes": [
         "movie",
@@ -85,7 +85,7 @@
       "disabledPlatforms": [],
       "supportsExternalPlayer": true,
       "runtimeTimeoutMs": 20000,
-      "notes": "Repo-wide TMDB alias matching V1: TMDB alternative/translated titles are searched and scored while retaining bounded Nuvio extraction."
+      "notes": "QuickJS compatibility hotfix: removes optional chaining/nullish coalescing that can fail on the embedded runtime, while retaining the native-fetch recursion fix and TMDB alias matching."
     },
     {
       "id": "moviebox",
@@ -119,7 +119,7 @@
       "id": "4khdhub",
       "name": "4KHDHub",
       "description": "Movie and TV stream provider",
-      "version": "1.2.0",
+      "version": "1.3.0",
       "author": "Luckez",
       "supportedTypes": [
         "movie",
@@ -140,7 +140,7 @@
       "disabledPlatforms": [],
       "supportsExternalPlayer": true,
       "runtimeTimeoutMs": 20000,
-      "notes": "Repo-wide TMDB alias matching V1: canonical/original/alternative/translated titles are searched and scored with year/media-type checks."
+      "notes": "Memory-scope rebuild: preserves all discovered host candidates but releases Cheerio DOMs before nested extraction, bounds redirect hops and persistent URL cache, reducing peak heap without intentionally capping servers."
     },
     {
       "id": "pencurimovie",

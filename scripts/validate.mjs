@@ -75,6 +75,29 @@ for (const scraper of manifest.scrapers) {
   if (!source.includes('VUEO_TITLE_PROFILE_V1')) {
     fail(`${scraper.filename} is missing the repo-wide TMDB title profile marker`);
   }
+
+  if (
+    scraper.id === 'hdhub4u' &&
+    /function\s+fetchWithTimeout\s*\([^)]*\)\s*\{[\s\S]*?fetchWithTimeout\s*\(\s*url\s*,\s*options\s*\|\|\s*\{\}\s*\)/.test(source)
+  ) {
+    fail('HDHub4u fetchWithTimeout must call native fetch, not itself');
+  }
+
+  if (scraper.id === 'hdhub4u' && (source.includes('?.') || source.includes('??'))) {
+    fail('HDHub4u must avoid optional chaining/nullish coalescing for embedded QuickJS compatibility');
+  }
+
+  if (scraper.id === '4khdhub') {
+    if (!source.includes('FOURK_MEMORY_SCOPE_GUARD_V1')) {
+      fail('4KHDHub is missing the memory-scope guard marker');
+    }
+    if (!source.includes('extractCandidateUrlsFromHtml')) {
+      fail('4KHDHub must parse host candidates into plain values before nested extraction');
+    }
+    if (/tasks\.push\(buildTask\(/.test(source)) {
+      fail('4KHDHub must not eagerly start host tasks while a Cheerio DOM is still in scope');
+    }
+  }
   const moduleObject = { exports: {} };
 
   const sandbox = {

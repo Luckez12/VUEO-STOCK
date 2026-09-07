@@ -1,5 +1,6 @@
 // HDHub4u Scraper for Nuvio Local Scrapers
 // React Native compatible version with full original functionality
+// HDHUB4U_QUICKJS_ES2019_COMPAT_V1
 
 const cheerio = require('cheerio-without-node-native');
 
@@ -53,7 +54,7 @@ function withSoftTimeout(promise, timeoutMs, label) {
 
 function fetchWithTimeout(url, options, timeoutMs) {
     return withSoftTimeout(
-        fetchWithTimeout(url, options || {}),
+        fetch(url, options || {}),
         timeoutMs || REQUEST_TIMEOUT_MS,
         'HDHub4u HTTP'
     );
@@ -1476,7 +1477,7 @@ function getTMDBDetails(tmdbId, mediaType) {
                     ? (data.original_name || '')
                     : (data.original_title || ''),
             year: year,
-            imdbId: data.external_ids?.imdb_id || null,
+            imdbId: (data.external_ids && data.external_ids.imdb_id) || null,
             aliases: collectTmdbAliasesHD(data)
         };
     });
@@ -1509,6 +1510,7 @@ function normalizeTitle(title) {
 
 
 /* VUEO_TITLE_PROFILE_V1 */
+/* HDHUB4U_FETCH_RECURSION_HOTFIX_V1 */
 function collectTmdbAliasesHD(data) {
     const output = [];
     const seen = new Set();
@@ -1912,8 +1914,8 @@ function getStreams(
 
                         streams.sort(function(a, b) {
                             return (
-                                (qualityOrder[b.quality] ?? -2) -
-                                (qualityOrder[a.quality] ?? -2)
+                                (qualityOrder[b.quality] !== undefined ? qualityOrder[b.quality] : -2) -
+                                (qualityOrder[a.quality] !== undefined ? qualityOrder[a.quality] : -2)
                             );
                         });
 
