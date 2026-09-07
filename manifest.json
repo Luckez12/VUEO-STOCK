@@ -1,12 +1,12 @@
 {
   "name": "VUEO Stock",
-  "version": "1.9.7",
+  "version": "1.9.8",
   "scrapers": [
     {
       "id": "kisskh",
       "name": "KissKH",
       "description": "Asian drama, series and movie streams with subtitle metadata",
-      "version": "1.0.1",
+      "version": "1.1.0",
       "author": "Luckez",
       "supportedTypes": [
         "movie",
@@ -29,7 +29,7 @@
       ],
       "disabledPlatforms": [],
       "supportsExternalPlayer": true,
-      "notes": "Supports movies, TV episodes, direct MP4 or HLS streams, playback headers and available KissKH subtitle tracks."
+      "notes": "Nuvio KissKH rebuild: movie/TV and season-aware title matching, independent video and subtitle key pipelines, KissKH subtitle API support, encrypted .txt subtitle decryption when CryptoJS is available, direct HLS/MP4 plus static iframe extraction, and native WebView fallback for third-party embeds. Video/source failures no longer automatically discard subtitles or other source candidates."
     },
     {
       "id": "onetouchtv",
