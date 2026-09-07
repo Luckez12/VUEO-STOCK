@@ -290,6 +290,190 @@ function titleScore(candidate, expected) {
   );
 }
 
+
+/* VUEO_TITLE_PROFILE_V1 */
+function collectTmdbAliases(data, mediaType) {
+  var output = [];
+  var seen = {};
+
+  function add(value, priority) {
+    var text = String(value || "").trim();
+    var key = normalizeTitle(text);
+    if (!text || !key || seen[key]) return;
+
+    seen[key] = true;
+    output.push({
+      title: text,
+      priority: Number(priority || 0)
+    });
+  }
+
+  add(data && (data.title || data.name), 100);
+  add(
+    data &&
+    (
+      data.original_title ||
+      data.original_name
+    ),
+    95
+  );
+
+  var altRoot =
+    data &&
+    data.alternative_titles;
+
+  var altItems =
+    altRoot &&
+    (
+      Array.isArray(altRoot.titles)
+        ? altRoot.titles
+        : Array.isArray(altRoot.results)
+          ? altRoot.results
+          : []
+    );
+
+  altItems.forEach(function(item) {
+    if (!item) return;
+
+    var country =
+      String(
+        item.iso_3166_1 || ""
+      ).toUpperCase();
+
+    var boost =
+      country === "US" ||
+      country === "GB"
+        ? 86
+        : country === "MY" ||
+          country === "ID"
+          ? 82
+          : 72;
+
+    add(
+      item.title ||
+      item.name,
+      boost
+    );
+  });
+
+  var translations =
+    data &&
+    data.translations &&
+    Array.isArray(
+      data.translations.translations
+    )
+      ? data.translations.translations
+      : [];
+
+  translations.forEach(function(item) {
+    var row =
+      item &&
+      item.data &&
+      typeof item.data === "object"
+        ? item.data
+        : {};
+
+    var lang =
+      String(
+        item &&
+        item.iso_639_1 ||
+        ""
+      ).toLowerCase();
+
+    var boost =
+      lang === "en"
+        ? 88
+        : lang === "ms" ||
+          lang === "id"
+          ? 80
+          : 68;
+
+    add(
+      row.title ||
+      row.name,
+      boost
+    );
+  });
+
+  output.sort(function(a, b) {
+    return b.priority - a.priority;
+  });
+
+  return output
+    .map(function(item) {
+      return item.title;
+    })
+    .slice(0, 12);
+}
+
+function bestAliasTitleScore(candidate, info) {
+  var aliases =
+    info &&
+    Array.isArray(info.aliases) &&
+    info.aliases.length
+      ? info.aliases
+      : [
+          info && info.title,
+          info && info.originalTitle
+        ];
+
+  var best = 0;
+
+  aliases.forEach(function(alias) {
+    best = Math.max(
+      best,
+      titleScore(
+        candidate,
+        alias
+      )
+    );
+  });
+
+  return best;
+}
+
+function buildAliasQueries(info, limit) {
+  var output = [];
+  var seen = {};
+
+  var aliases =
+    info &&
+    Array.isArray(info.aliases)
+      ? info.aliases
+      : [
+          info && info.title,
+          info && info.originalTitle
+        ];
+
+  aliases.forEach(function(alias) {
+    var text =
+      String(alias || "")
+        .trim();
+
+    var key =
+      normalizeTitle(text);
+
+    if (
+      !text ||
+      !key ||
+      seen[key]
+    ) {
+      return;
+    }
+
+    seen[key] = true;
+    output.push(text);
+  });
+
+  return output.slice(
+    0,
+    Math.max(
+      1,
+      Number(limit || 4)
+    )
+  );
+}
+
 function yearOf(item) {
   var raw =
     String(
@@ -382,15 +566,9 @@ function candidateScore(
     );
 
   var score =
-    Math.max(
-      titleScore(
-        candidateTitle,
-        info.title
-      ),
-      titleScore(
-        candidateTitle,
-        info.originalTitle
-      )
+    bestAliasTitleScore(
+      candidateTitle,
+      info
     );
 
   var itemYear =
@@ -511,7 +689,8 @@ function getTmdbInfo(
     "/" +
     encodeURIComponent(tmdbId) +
     "?api_key=" +
-    TMDB_API_KEY;
+    TMDB_API_KEY +
+    "&append_to_response=alternative_titles,translations,external_ids";
 
   return fetchJson(
     url,
@@ -548,7 +727,12 @@ function getTmdbInfo(
             data.first_air_date
           ) ||
           ""
-        ).split("-")[0]
+        ).split("-")[0],
+      aliases:
+        collectTmdbAliases(
+          data,
+          mediaType
+        )
     };
   });
 }
@@ -617,29 +801,30 @@ function buildSearchQueries(
     output.push(text);
   }
 
+  var aliases =
+    buildAliasQueries(
+      info,
+      5
+    );
+
   if (
     mediaType === "tv" &&
     Number(season || 1) > 1
   ) {
-    add(
-      info.title +
-      " Season " +
-      Number(season)
-    );
-
-    add(
-      info.originalTitle +
-      " Season " +
-      Number(season)
-    );
+    aliases.slice(0, 3)
+      .forEach(function(alias) {
+        add(
+          alias +
+          " Season " +
+          Number(season)
+        );
+      });
   }
 
-  add(info.title);
-  add(info.originalTitle);
+  aliases.forEach(add);
 
-  return output;
+  return output.slice(0, 7);
 }
-
 function findBestDrama(
   info,
   mediaType,

@@ -24,7 +24,7 @@ var COMMON_HEADERS = {
 };
 
 var PROVIDER_BUDGET_MS = 19000;
-var WEBVIEW_BUDGET_MS = 17500;
+var WEBVIEW_BUDGET_MS = 5200;
 var SEARCH_COLLECT_MS = 4300;
 var DETAIL_RACE_MS = 3400;
 var PLAY_COLLECT_MS = 5600;
@@ -220,7 +220,8 @@ function getTmdbInfo(tmdbId, mediaType) {
     "/" +
     encodeURIComponent(tmdbId) +
     "?api_key=" +
-    TMDB_API_KEY;
+    TMDB_API_KEY +
+    "&append_to_response=alternative_titles,translations,external_ids";
 
   return fetchJson(
     url,
@@ -256,7 +257,12 @@ function getTmdbInfo(tmdbId, mediaType) {
             data.first_air_date
           ) ||
           ""
-        ).split("-")[0]
+        ).split("-")[0],
+      aliases:
+        collectTmdbAliases(
+          data,
+          mediaType
+        )
     };
   });
 }
@@ -333,6 +339,190 @@ function titleScore(candidate, expected) {
   );
 }
 
+
+/* VUEO_TITLE_PROFILE_V1 */
+function collectTmdbAliases(data, mediaType) {
+  var output = [];
+  var seen = {};
+
+  function add(value, priority) {
+    var text = String(value || "").trim();
+    var key = normalizeTitle(text);
+    if (!text || !key || seen[key]) return;
+
+    seen[key] = true;
+    output.push({
+      title: text,
+      priority: Number(priority || 0)
+    });
+  }
+
+  add(data && (data.title || data.name), 100);
+  add(
+    data &&
+    (
+      data.original_title ||
+      data.original_name
+    ),
+    95
+  );
+
+  var altRoot =
+    data &&
+    data.alternative_titles;
+
+  var altItems =
+    altRoot &&
+    (
+      Array.isArray(altRoot.titles)
+        ? altRoot.titles
+        : Array.isArray(altRoot.results)
+          ? altRoot.results
+          : []
+    );
+
+  altItems.forEach(function(item) {
+    if (!item) return;
+
+    var country =
+      String(
+        item.iso_3166_1 || ""
+      ).toUpperCase();
+
+    var boost =
+      country === "US" ||
+      country === "GB"
+        ? 86
+        : country === "MY" ||
+          country === "ID"
+          ? 82
+          : 72;
+
+    add(
+      item.title ||
+      item.name,
+      boost
+    );
+  });
+
+  var translations =
+    data &&
+    data.translations &&
+    Array.isArray(
+      data.translations.translations
+    )
+      ? data.translations.translations
+      : [];
+
+  translations.forEach(function(item) {
+    var row =
+      item &&
+      item.data &&
+      typeof item.data === "object"
+        ? item.data
+        : {};
+
+    var lang =
+      String(
+        item &&
+        item.iso_639_1 ||
+        ""
+      ).toLowerCase();
+
+    var boost =
+      lang === "en"
+        ? 88
+        : lang === "ms" ||
+          lang === "id"
+          ? 80
+          : 68;
+
+    add(
+      row.title ||
+      row.name,
+      boost
+    );
+  });
+
+  output.sort(function(a, b) {
+    return b.priority - a.priority;
+  });
+
+  return output
+    .map(function(item) {
+      return item.title;
+    })
+    .slice(0, 12);
+}
+
+function bestAliasTitleScore(candidate, info) {
+  var aliases =
+    info &&
+    Array.isArray(info.aliases) &&
+    info.aliases.length
+      ? info.aliases
+      : [
+          info && info.title,
+          info && info.originalTitle
+        ];
+
+  var best = 0;
+
+  aliases.forEach(function(alias) {
+    best = Math.max(
+      best,
+      titleScore(
+        candidate,
+        alias
+      )
+    );
+  });
+
+  return best;
+}
+
+function buildAliasQueries(info, limit) {
+  var output = [];
+  var seen = {};
+
+  var aliases =
+    info &&
+    Array.isArray(info.aliases)
+      ? info.aliases
+      : [
+          info && info.title,
+          info && info.originalTitle
+        ];
+
+  aliases.forEach(function(alias) {
+    var text =
+      String(alias || "")
+        .trim();
+
+    var key =
+      normalizeTitle(text);
+
+    if (
+      !text ||
+      !key ||
+      seen[key]
+    ) {
+      return;
+    }
+
+    seen[key] = true;
+    output.push(text);
+  });
+
+  return output.slice(
+    0,
+    Math.max(
+      1,
+      Number(limit || 4)
+    )
+  );
+}
+
 function itemYear(item) {
   var raw =
     String(
@@ -392,15 +582,9 @@ function extractSearchItems(payload) {
 
 function scoreCandidate(item, info, mediaType) {
   var score =
-    Math.max(
-      titleScore(
-        item && item.title,
-        info.title
-      ),
-      titleScore(
-        item && item.title,
-        info.originalTitle
-      )
+    bestAliasTitleScore(
+      item && item.title,
+      info
     );
 
   var year =
@@ -546,6 +730,16 @@ function chooseAcrossMirrors(
    * type bonuses make the intended result naturally win.
    */
   if (candidates[0].score < 22) {
+    console.log(
+      "[MovieBox] H5 weak candidate title=" +
+      String(
+        candidates[0].item &&
+        candidates[0].item.title ||
+        ""
+      ) +
+      " score=" +
+      candidates[0].score
+    );
     return null;
   }
 
@@ -556,8 +750,18 @@ function searchH5(
   info,
   mediaType
 ) {
+  var queries =
+    buildAliasQueries(
+      info,
+      5
+    );
+
+  var primary =
+    queries[0] ||
+    info.title;
+
   return collectAllSearchResults(
-    info.title
+    primary
   ).then(function(results) {
     var best =
       chooseAcrossMirrors(
@@ -568,26 +772,63 @@ function searchH5(
 
     if (best) return best;
 
-    if (
-      info.originalTitle &&
-      normalizeTitle(info.originalTitle) !==
-        normalizeTitle(info.title)
-    ) {
-      return collectAllSearchResults(
-        info.originalTitle
-      ).then(function(extra) {
-        return chooseAcrossMirrors(
+    var fallbackQueries =
+      queries
+        .slice(1, 5);
+
+    if (!fallbackQueries.length) {
+      return null;
+    }
+
+    /*
+     * Alias fallback uses only the two healthiest ordered mirrors instead of
+     * querying every alias on all four hosts. This fixes alternate-title
+     * matching without turning a miss into a 20 second provider timeout.
+     */
+    var hosts =
+      orderedHosts()
+        .slice(0, 2);
+
+    var tasks = [];
+
+    fallbackQueries.forEach(
+      function(query) {
+        hosts.forEach(function(host) {
+          tasks.push(
+            searchHost(
+              host,
+              query
+            ).then(function(result) {
+              result.query = query;
+              return result;
+            })
+          );
+        });
+      }
+    );
+
+    return collectSettled(
+      tasks,
+      4100
+    ).then(function(extra) {
+      var aliasBest =
+        chooseAcrossMirrors(
           extra,
           info,
           mediaType
         );
-      });
-    }
 
-    return null;
+      if (!aliasBest) {
+        console.log(
+          "[MovieBox] H5 aliases exhausted count=" +
+          fallbackQueries.length
+        );
+      }
+
+      return aliasBest;
+    });
   });
 }
-
 function raceDetailHosts(
   subjectId,
   seedHost
@@ -1444,12 +1685,7 @@ function resolveMovieBoxWebsite(
         1500,
         2600,
         3900,
-        5400,
-        7100,
-        9000,
-        11100,
-        13400,
-        15700
+        4900
       ],
       match: [
         ".m3u8",
@@ -1662,7 +1898,8 @@ function getStreams(
         return {
           title: "",
           originalTitle: "",
-          year: ""
+          year: "",
+          aliases: []
         };
       })
       .then(function(info) {

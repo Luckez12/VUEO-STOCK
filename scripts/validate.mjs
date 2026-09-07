@@ -71,6 +71,10 @@ for (const scraper of manifest.scrapers) {
   if (!fs.existsSync(providerPath)) fail(`Missing ${scraper.filename}`);
 
   const source = fs.readFileSync(providerPath, 'utf8');
+
+  if (!source.includes('VUEO_TITLE_PROFILE_V1')) {
+    fail(`${scraper.filename} is missing the repo-wide TMDB title profile marker`);
+  }
   const moduleObject = { exports: {} };
 
   const sandbox = {
