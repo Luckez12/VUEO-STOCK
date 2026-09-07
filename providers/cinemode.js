@@ -108,11 +108,11 @@ function getTmdbInfo(
     "/" +
     encodeURIComponent(tmdbId) +
     "?api_key=" +
-    TMDB_API_KEY ;
+    TMDB_API_KEY;
 
   return fetchJson(
     url,
-    3600
+    1600
   ).then(function(data) {
     return {
       title:
@@ -144,9 +144,7 @@ function getTmdbInfo(
           ) ||
           ""
         )
-          .split("-")[0],
-      aliases:
-        collectTmdbAliasesCine(data)
+          .split("-")[0]
     };
   });
 }
@@ -159,76 +157,6 @@ function normalizeTitle(value) {
     .replace(/[^a-z0-9\u00c0-\uffff]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
-}
-
-
-/* VUEO_TITLE_PROFILE_V1 */
-/* VUEO_LIGHTWEIGHT_TMDB_V1 */
-function collectTmdbAliasesCine(data) {
-  var output = [];
-  var seen = {};
-
-  function add(value, priority) {
-    var text = String(value || "").trim();
-    var key = normalizeTitle(text);
-
-    if (!text || !key || seen[key]) {
-      return;
-    }
-
-    seen[key] = true;
-    output.push({
-      title: text,
-      priority: Number(priority || 0)
-    });
-  }
-
-  add(data && (data.title || data.name), 100);
-  add(data && (data.original_title || data.original_name), 95);
-
-  var alt = data && data.alternative_titles;
-  var altItems =
-    alt && Array.isArray(alt.titles)
-      ? alt.titles
-      : alt && Array.isArray(alt.results)
-        ? alt.results
-        : [];
-
-  altItems.forEach(function(item) {
-    add(
-      item && (item.title || item.name),
-      82
-    );
-  });
-
-  var translations =
-    data &&
-    data.translations &&
-    Array.isArray(data.translations.translations)
-      ? data.translations.translations
-      : [];
-
-  translations.forEach(function(item) {
-    add(
-      item &&
-      item.data &&
-      (
-        item.data.title ||
-        item.data.name
-      ),
-      item && item.iso_639_1 === "en" ? 88 : 68
-    );
-  });
-
-  output.sort(function(a, b) {
-    return b.priority - a.priority;
-  });
-
-  return output
-    .map(function(item) {
-      return item.title;
-    })
-    .slice(0, 10);
 }
 
 function inferQuality(
@@ -770,37 +698,26 @@ function getStreams(
               return primaryStreams;
             }
 
-            var fallbackTitle = "";
+            var original =
+              String(
+                info.originalTitle || ""
+              ).trim();
 
-            (info.aliases || [])
-              .some(function(alias) {
-                var value =
-                  String(alias || "")
-                    .trim();
-
-                if (
-                  !value ||
-                  normalizeTitle(value) ===
-                    normalizeTitle(info.title)
-                ) {
-                  return false;
-                }
-
-                fallbackTitle = value;
-                return true;
-              });
-
-            if (!fallbackTitle) {
+            if (
+              !original ||
+              normalizeTitle(original) ===
+                normalizeTitle(info.title)
+            ) {
               return [];
             }
 
             /*
-             * Use the highest-priority TMDB alias only when the primary title
-             * produced no media. One fallback keeps CineMode inside its 20s
-             * runtime while covering alternate/localized title cases.
+             * Search the original-language title only when the TMDB display
+             * title produced no media. This fixes alternate-title failures
+             * without doubling WebView cost on successful requests.
              */
             return runUiSearch(
-              fallbackTitle,
+              original,
               info,
               type,
               requestedSeason,

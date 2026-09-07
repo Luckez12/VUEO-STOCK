@@ -71,25 +71,6 @@ for (const scraper of manifest.scrapers) {
   if (!fs.existsSync(providerPath)) fail(`Missing ${scraper.filename}`);
 
   const source = fs.readFileSync(providerPath, 'utf8');
-
-  if (!source.includes('VUEO_TITLE_PROFILE_V1')) {
-    fail(`${scraper.filename} is missing the repo-wide TMDB title profile marker`);
-  }
-
-  if (source.includes('append_to_response=alternative_titles,translations')) {
-    fail(`${scraper.filename} must not use heavy TMDB append_to_response in the mandatory path`);
-  }
-
-  if (!source.includes('VUEO_LIGHTWEIGHT_TMDB_V1')) {
-    fail(`${scraper.filename} is missing lightweight TMDB marker`);
-  }
-
-  if (
-    scraper.id === 'hdhub4u' &&
-    /function\s+fetchWithTimeout\s*\([^)]*\)\s*\{[\s\S]*?fetchWithTimeout\s*\(\s*url\s*,\s*options\s*\|\|\s*\{\}\s*\)/.test(source)
-  ) {
-    fail('HDHub4u fetchWithTimeout must call native fetch, not itself');
-  }
   const moduleObject = { exports: {} };
 
   const sandbox = {

@@ -1,12 +1,12 @@
 {
   "name": "VUEO Stock",
-  "version": "1.12.0",
+  "version": "1.10.3",
   "scrapers": [
     {
       "id": "kisskh",
       "name": "KissKH",
       "description": "Asian drama, series and movie streams with subtitle metadata",
-      "version": "1.2.1",
+      "version": "1.1.0",
       "author": "Luckez",
       "supportedTypes": [
         "movie",
@@ -29,13 +29,13 @@
       ],
       "disabledPlatforms": [],
       "supportsExternalPlayer": true,
-      "notes": "V12 lightweight TMDB hotfix: provider startup now requests only core TMDB metadata (title, original title, year). Heavy alternative_titles/translations are no longer appended to the mandatory first request, preventing slow mobile TMDB responses from blocking all source extraction. Existing fuzzy/original-title matching and provider-specific fallbacks remain."
+      "notes": "Nuvio KissKH rebuild: movie/TV and season-aware title matching, independent video and subtitle key pipelines, KissKH subtitle API support, encrypted .txt subtitle decryption when CryptoJS is available, direct HLS/MP4 plus static iframe extraction, and native WebView fallback for third-party embeds. Video/source failures no longer automatically discard subtitles or other source candidates."
     },
     {
       "id": "onetouchtv",
       "name": "OneTouchTV",
       "description": "Asian drama, anime, series and movie streams with subtitle metadata",
-      "version": "1.2.1",
+      "version": "1.1.0",
       "author": "Luckez",
       "supportedTypes": [
         "movie",
@@ -58,13 +58,13 @@
       ],
       "disabledPlatforms": [],
       "supportsExternalPlayer": true,
-      "notes": "V12 lightweight TMDB hotfix: provider startup now requests only core TMDB metadata (title, original title, year). Heavy alternative_titles/translations are no longer appended to the mandatory first request, preventing slow mobile TMDB responses from blocking all source extraction. Existing fuzzy/original-title matching and provider-specific fallbacks remain."
+      "notes": "Nuvio OneTouchTV reliability pass: request/provider timeouts, encrypted-or-plaintext API compatibility, stronger movie/TV type matching, safer episode-number mapping across multiple field names, broader stream/subtitle response shapes, and Media3-safe header sanitisation while preserving each source's Referer and Cookie."
     },
     {
       "id": "hdhub4u",
       "name": "HDHub4u",
       "description": "Movie and TV stream provider",
-      "version": "1.2.2",
+      "version": "1.1.0",
       "author": "Luckez",
       "supportedTypes": [
         "movie",
@@ -85,13 +85,13 @@
       "disabledPlatforms": [],
       "supportsExternalPlayer": true,
       "runtimeTimeoutMs": 20000,
-      "notes": "V12 lightweight TMDB hotfix: provider startup now requests only core TMDB metadata (title, original title, year). Heavy alternative_titles/translations are no longer appended to the mandatory first request, preventing slow mobile TMDB responses from blocking all source extraction. Existing fuzzy/original-title matching and provider-specific fallbacks remain."
+      "notes": "Nuvio HDHub4u reliability rebuild: bounded request/provider timeouts, fixed redirector data decoding, current strong/Episode layout support, numeric episode matching, title + original-title search, HubDrive/HbLinks multi-source collection, generic/WebView extraction for HubStream/HDStream4u/unknown embeds, playback-header sanitisation, and valid Auto-quality streams are no longer discarded."
     },
     {
       "id": "moviebox",
       "name": "MovieBox",
       "description": "Movie and TV streams from the current MovieBox H5 web API mirror pool",
-      "version": "2.6.1",
+      "version": "2.5.0",
       "author": "Luckez",
       "supportedTypes": [
         "movie",
@@ -113,13 +113,13 @@
       "disabledPlatforms": [],
       "supportsExternalPlayer": true,
       "runtimeTimeoutMs": 20000,
-      "notes": "V12 lightweight TMDB hotfix: provider startup now requests only core TMDB metadata (title, original title, year). Heavy alternative_titles/translations are no longer appended to the mandatory first request, preventing slow mobile TMDB responses from blocking all source extraction. Existing fuzzy/original-title matching and provider-specific fallbacks remain."
+      "notes": "Nuvio H5 resolver is now the primary MovieBox path. It resolves TMDB metadata, searches MovieBox mirrors, merges unique streams from every successful H5 mirror, preserves each stream's originating playback Referer, merges EN/MS/ID captions, and falls back to native WebView only when H5 yields no playable source."
     },
     {
       "id": "4khdhub",
       "name": "4KHDHub",
       "description": "Movie and TV stream provider",
-      "version": "1.2.1",
+      "version": "1.1.0",
       "author": "Luckez",
       "supportedTypes": [
         "movie",
@@ -140,13 +140,13 @@
       "disabledPlatforms": [],
       "supportsExternalPlayer": true,
       "runtimeTimeoutMs": 20000,
-      "notes": "V12 lightweight TMDB hotfix: provider startup now requests only core TMDB metadata (title, original title, year). Heavy alternative_titles/translations are no longer appended to the mandatory first request, preventing slow mobile TMDB responses from blocking all source extraction. Existing fuzzy/original-title matching and provider-specific fallbacks remain."
+      "notes": "Nuvio reliability rebuild based on the proven Cloudstream 4KHDHub flow: known 4khdhub.one domain fallback, request/provider timeouts, type-aware TMDB matching, current Episode-XX plus legacy SxxExx parsing, bounded all-mirror resolution, HubDrive multi-candidate extraction, and support for HubCloud, HubCDN, Hblinks, HDStream4u, HubStream, PixelDrain and direct media while preserving playback Referer headers."
     },
     {
       "id": "pencurimovie",
       "name": "PencuriMovie",
       "description": "Malaysia and Indonesia movie and TV streams with multi-server playback",
-      "version": "1.4.1",
+      "version": "1.3.0",
       "author": "Luckez",
       "supportedTypes": [
         "movie",
@@ -167,14 +167,14 @@
       ],
       "disabledPlatforms": [],
       "supportsExternalPlayer": true,
-      "notes": "V12 lightweight TMDB hotfix: provider startup now requests only core TMDB metadata (title, original title, year). Heavy alternative_titles/translations are no longer appended to the mandatory first request, preventing slow mobile TMDB responses from blocking all source extraction. Existing fuzzy/original-title matching and provider-specific fallbacks remain.",
+      "notes": "Nuvio PencuriMovie now collects and merges streams/subtitles from every movieplay iframe instead of returning the first successful server. Standard extractors run with bounded concurrency across all frames; only the expensive native WebView fallback is capped to 3 unresolved frames. Duplicate sources are removed and each stream keeps its own Referer/headers and server label.",
       "runtimeTimeoutMs": 20000
     },
     {
       "id": "msm21",
       "name": "MSM21",
       "description": "Malay subtitle movie and TV streams using Zeta player multi-server extraction",
-      "version": "1.3.1",
+      "version": "1.2.0",
       "author": "Luckez",
       "supportedTypes": [
         "movie",
@@ -195,14 +195,14 @@
       ],
       "disabledPlatforms": [],
       "supportsExternalPlayer": true,
-      "notes": "V12 lightweight TMDB hotfix: provider startup now requests only core TMDB metadata (title, original title, year). Heavy alternative_titles/translations are no longer appended to the mandatory first request, preventing slow mobile TMDB responses from blocking all source extraction. Existing fuzzy/original-title matching and provider-specific fallbacks remain.",
+      "notes": "Nuvio MSM21 now evaluates every Zeta player option instead of hard-capping 8 fast + 6 fallback sources. Standard extractors are collected with bounded concurrency and merged/deduplicated; only the expensive native WebView lane remains capped to 3 unresolved mirrors. Multiple mirrors and subtitles can contribute to the final result instead of first-success discarding the rest.",
       "runtimeTimeoutMs": 20000
     },
     {
       "id": "cinemode",
       "name": "CineMode",
       "description": "Movie and TV stream resolver for the CineMode streaming PWA",
-      "version": "1.2.1",
+      "version": "1.1.0",
       "author": "Luckez",
       "supportedTypes": [
         "movie",
@@ -223,7 +223,7 @@
       "disabledPlatforms": [],
       "supportsExternalPlayer": true,
       "runtimeTimeoutMs": 20000,
-      "notes": "V12 lightweight TMDB hotfix: provider startup now requests only core TMDB metadata (title, original title, year). Heavy alternative_titles/translations are no longer appended to the mandatory first request, preventing slow mobile TMDB responses from blocking all source extraction. Existing fuzzy/original-title matching and provider-specific fallbacks remain."
+      "notes": "Nuvio CineMode reliability rebuild: TV requests now drive Season/Episode UI controls before Watch/Play, TMDB original-title retry is used only when the primary search returns no media, direct HLS/MP4/M4V captures are preferred over /sora/ intermediates, captured player Referer/Cookie headers are preserved, TMDB title is used in stream metadata, and WebView/provider budgets are bounded."
     }
   ]
 }

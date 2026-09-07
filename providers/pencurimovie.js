@@ -209,191 +209,6 @@ function titleScore(candidate, expected) {
   return Math.round((recall * 0.72 + precision * 0.28) * 72);
 }
 
-
-/* VUEO_TITLE_PROFILE_V1 */
-/* VUEO_LIGHTWEIGHT_TMDB_V1 */
-function collectTmdbAliases(data, mediaType) {
-  var output = [];
-  var seen = {};
-
-  function add(value, priority) {
-    var text = String(value || "").trim();
-    var key = normalizeTitle(text);
-    if (!text || !key || seen[key]) return;
-
-    seen[key] = true;
-    output.push({
-      title: text,
-      priority: Number(priority || 0)
-    });
-  }
-
-  add(data && (data.title || data.name), 100);
-  add(
-    data &&
-    (
-      data.original_title ||
-      data.original_name
-    ),
-    95
-  );
-
-  var altRoot =
-    data &&
-    data.alternative_titles;
-
-  var altItems =
-    altRoot &&
-    (
-      Array.isArray(altRoot.titles)
-        ? altRoot.titles
-        : Array.isArray(altRoot.results)
-          ? altRoot.results
-          : []
-    );
-
-  altItems.forEach(function(item) {
-    if (!item) return;
-
-    var country =
-      String(
-        item.iso_3166_1 || ""
-      ).toUpperCase();
-
-    var boost =
-      country === "US" ||
-      country === "GB"
-        ? 86
-        : country === "MY" ||
-          country === "ID"
-          ? 82
-          : 72;
-
-    add(
-      item.title ||
-      item.name,
-      boost
-    );
-  });
-
-  var translations =
-    data &&
-    data.translations &&
-    Array.isArray(
-      data.translations.translations
-    )
-      ? data.translations.translations
-      : [];
-
-  translations.forEach(function(item) {
-    var row =
-      item &&
-      item.data &&
-      typeof item.data === "object"
-        ? item.data
-        : {};
-
-    var lang =
-      String(
-        item &&
-        item.iso_639_1 ||
-        ""
-      ).toLowerCase();
-
-    var boost =
-      lang === "en"
-        ? 88
-        : lang === "ms" ||
-          lang === "id"
-          ? 80
-          : 68;
-
-    add(
-      row.title ||
-      row.name,
-      boost
-    );
-  });
-
-  output.sort(function(a, b) {
-    return b.priority - a.priority;
-  });
-
-  return output
-    .map(function(item) {
-      return item.title;
-    })
-    .slice(0, 12);
-}
-
-function bestAliasTitleScore(candidate, info) {
-  var aliases =
-    info &&
-    Array.isArray(info.aliases) &&
-    info.aliases.length
-      ? info.aliases
-      : [
-          info && info.title,
-          info && info.originalTitle
-        ];
-
-  var best = 0;
-
-  aliases.forEach(function(alias) {
-    best = Math.max(
-      best,
-      titleScore(
-        candidate,
-        alias
-      )
-    );
-  });
-
-  return best;
-}
-
-function buildAliasQueries(info, limit) {
-  var output = [];
-  var seen = {};
-
-  var aliases =
-    info &&
-    Array.isArray(info.aliases)
-      ? info.aliases
-      : [
-          info && info.title,
-          info && info.originalTitle
-        ];
-
-  aliases.forEach(function(alias) {
-    var text =
-      String(alias || "")
-        .trim();
-
-    var key =
-      normalizeTitle(text);
-
-    if (
-      !text ||
-      !key ||
-      seen[key]
-    ) {
-      return;
-    }
-
-    seen[key] = true;
-    output.push(text);
-  });
-
-  return output.slice(
-    0,
-    Math.max(
-      1,
-      Number(limit || 4)
-    )
-  );
-}
-
 function yearFrom(value) {
   var match = String(value || "").match(/\b(19|20)\d{2}\b/);
   return match ? match[0] : "";
@@ -405,13 +220,12 @@ function getTmdbInfo(tmdbId, mediaType) {
     "https://api.themoviedb.org/3/" + endpoint + "/" + encodeURIComponent(tmdbId) +
     "?api_key=" + TMDB_API_KEY;
 
-  return requestJson(url, { "Accept": "application/json" }, 3600).then(function(data) {
+  return requestJson(url, { "Accept": "application/json" }, 1400).then(function(data) {
     return {
       tmdbId: String(tmdbId),
       title: String(data && (data.title || data.name) || ""),
       originalTitle: String(data && (data.original_title || data.original_name) || ""),
-      year: String(data && (data.release_date || data.first_air_date) || "").split("-")[0],
-      aliases: collectTmdbAliases(data, mediaType)
+      year: String(data && (data.release_date || data.first_air_date) || "").split("-")[0]
     };
   });
 }
@@ -472,11 +286,10 @@ function parseSearchResults(html, baseUrl) {
 }
 
 function scoreCandidate(item, info, mediaType) {
-  var score =
-    bestAliasTitleScore(
-      item.title,
-      info
-    );
+  var score = Math.max(
+    titleScore(item.title, info.title),
+    titleScore(item.title, info.originalTitle)
+  );
 
   if (info.year && item.year && info.year === item.year) score += 28;
   if (mediaType === "tv" && item.isSeries) score += 24;
@@ -556,11 +369,10 @@ function isDirectPencuriMatch(result, info, mediaType) {
   if (slug && pathSlug.indexOf(slug) === 0) return true;
 
   var identity = extractPageIdentity(body);
-  var score =
-    bestAliasTitleScore(
-      identity.title,
-      info
-    );
+  var score = Math.max(
+    titleScore(identity.title, info.title),
+    titleScore(identity.title, info.originalTitle)
+  );
 
   if (score < 52) return false;
   if (info.year && identity.year && String(info.year) !== String(identity.year)) {
@@ -571,11 +383,13 @@ function isDirectPencuriMatch(result, info, mediaType) {
 }
 
 function buildPencuriDirectCandidates(baseUrl, info, mediaType) {
-  var titles =
-    buildAliasQueries(
-      info,
-      4
-    );
+  var titles = [info.title];
+  if (
+    info.originalTitle &&
+    normalizeTitle(info.originalTitle) !== normalizeTitle(info.title)
+  ) {
+    titles.push(info.originalTitle);
+  }
 
   var output = [];
   var seen = Object.create(null);
@@ -671,101 +485,54 @@ function searchSite(baseUrl, query) {
 }
 
 function findBestTitle(baseUrl, info, mediaType) {
-  return tryDirectPencuriPage(
-    baseUrl,
-    info,
-    mediaType
-  ).then(function(direct) {
+  return tryDirectPencuriPage(baseUrl, info, mediaType).then(function(direct) {
     if (direct) return direct;
 
-    console.log(
-      "[PencuriMovie] direct permalink miss, using alias-aware site search"
-    );
+    console.log("[PencuriMovie] direct permalink miss, using site search");
 
-    var queries =
-      buildAliasQueries(
-        info,
-        4
-      );
+    return searchSite(baseUrl, info.title).then(function(items) {
+      items.sort(function(a, b) {
+        return scoreCandidate(b, info, mediaType) - scoreCandidate(a, info, mediaType);
+      });
 
-    function tryQuery(index, bestSoFar) {
-      if (index >= queries.length) {
-        return Promise.resolve(bestSoFar);
+      var best = items[0] || null;
+      if (best && scoreCandidate(best, info, mediaType) >= 30) {
+        return best;
       }
 
-      return searchSite(
-        cachedBaseUrl || baseUrl,
-        queries[index]
-      ).then(function(items) {
-        items.sort(function(a, b) {
-          return (
-            scoreCandidate(b, info, mediaType) -
-            scoreCandidate(a, info, mediaType)
-          );
+      if (
+        !best &&
+        info.originalTitle &&
+        normalizeTitle(info.originalTitle) !== normalizeTitle(info.title)
+      ) {
+        return searchSite(
+          cachedBaseUrl || baseUrl,
+          info.originalTitle
+        ).then(function(extra) {
+          extra.sort(function(a, b) {
+            return scoreCandidate(b, info, mediaType) -
+              scoreCandidate(a, info, mediaType);
+          });
+          return extra[0] || null;
         });
+      }
 
-        var best =
-          items[0] || null;
-
-        var selected =
-          !bestSoFar ||
-          (
-            best &&
-            scoreCandidate(best, info, mediaType) >
-            scoreCandidate(bestSoFar, info, mediaType)
-          )
-            ? best || bestSoFar
-            : bestSoFar;
-
-        if (
-          selected &&
-          scoreCandidate(
-            selected,
-            info,
-            mediaType
-          ) >= 30
-        ) {
-          return selected;
-        }
-
-        return tryQuery(
-          index + 1,
-          selected
-        );
-      }).catch(function() {
-        return tryQuery(
-          index + 1,
-          bestSoFar
-        );
-      });
-    }
-
-    return tryQuery(0, null);
+      return best;
+    });
   }).then(function(best) {
-    if (!best) {
-      throw new Error(
-        "No PencuriMovie title match"
-      );
-    }
+    if (!best) throw new Error("No PencuriMovie title match");
 
     if (!best.__detailHtml) {
-      var score =
-        scoreCandidate(
-          best,
-          info,
-          mediaType
-        );
-
+      var score = scoreCandidate(best, info, mediaType);
       if (score < 24) {
-        throw new Error(
-          "PencuriMovie match confidence too low"
-        );
+        throw new Error("PencuriMovie match confidence too low");
       }
     }
 
     return best;
   });
 }
+
 function parseEpisodeTarget(html, pageUrl, requestedSeason, requestedEpisode) {
   var seasonNumber = Number(requestedSeason || 1);
   var episodeNumber = Number(requestedEpisode || 1);
