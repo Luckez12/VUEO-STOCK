@@ -1,6 +1,6 @@
 {
   "name": "VUEO Stock",
-  "version": "1.9.9",
+  "version": "1.10.0",
   "scrapers": [
     {
       "id": "kisskh",
@@ -35,7 +35,7 @@
       "id": "onetouchtv",
       "name": "OneTouchTV",
       "description": "Asian drama, anime, series and movie streams with subtitle metadata",
-      "version": "1.0.2",
+      "version": "1.1.0",
       "author": "Luckez",
       "supportedTypes": [
         "movie",
@@ -58,7 +58,7 @@
       ],
       "disabledPlatforms": [],
       "supportsExternalPlayer": true,
-      "notes": "Supports movies and TV episodes through the OneTouchTV encrypted API, including direct stream sources, playback headers and available subtitle tracks."
+      "notes": "Nuvio OneTouchTV reliability pass: request/provider timeouts, encrypted-or-plaintext API compatibility, stronger movie/TV type matching, safer episode-number mapping across multiple field names, broader stream/subtitle response shapes, and Media3-safe header sanitisation while preserving each source's Referer and Cookie."
     },
     {
       "id": "hdhub4u",
