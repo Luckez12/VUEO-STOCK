@@ -612,40 +612,44 @@ function tryDirectPencuriPage(baseUrl, info, mediaType) {
   var candidates = buildPencuriDirectCandidates(baseUrl, info, mediaType);
   if (!candidates.length) return Promise.resolve(null);
 
-  function tryIndex(index) {
-    if (index >= candidates.length) return Promise.resolve(null);
-
-    var url = candidates[index];
-    var timeoutMs = index === 0 ? 1400 : 700;
-
-    return requestText(
-      url,
-      { "Referer": trimSlash(cachedBaseUrl || baseUrl) + "/" },
-      timeoutMs
-    ).then(function(result) {
-      updateBaseFromUrl(result.url || url);
-
-      if (!isDirectPencuriMatch(result, info, mediaType)) {
-        return tryIndex(index + 1);
-      }
-
-      console.log(
-        "[PencuriMovie] direct permalink hit " + (result.url || url)
-      );
-
-      return {
-        title: info.title,
-        href: result.url || url,
-        year: info.year,
-        isSeries: mediaType === "tv",
-        __detailHtml: result.text
+  /* VUEO_FAST_DISCOVERY_V1
+   * Preserve every direct slug candidate but probe them in a bounded pool.
+   * Choose the earliest valid candidate in the original preference order.
+   */
+  return collectValuesBounded(
+    candidates.map(function(url, index) {
+      return function() {
+        var timeoutMs = index === 0 ? 1400 : 700;
+        return requestText(
+          url,
+          { "Referer": trimSlash(cachedBaseUrl || baseUrl) + "/" },
+          timeoutMs
+        ).then(function(result) {
+          updateBaseFromUrl(result.url || url);
+          if (!isDirectPencuriMatch(result, info, mediaType)) return null;
+          return {
+            index: index,
+            match: {
+              title: info.title,
+              href: result.url || url,
+              year: info.year,
+              isSeries: mediaType === "tv",
+              __detailHtml: result.text
+            }
+          };
+        }).catch(function() { return null; });
       };
-    }).catch(function() {
-      return tryIndex(index + 1);
+    }),
+    3,
+    3200
+  ).then(function(matches) {
+    matches = matches.filter(Boolean).sort(function(a, b) {
+      return a.index - b.index;
     });
-  }
-
-  return tryIndex(0);
+    if (!matches.length) return null;
+    console.log("[PencuriMovie] direct permalink hit " + matches[0].match.href);
+    return matches[0].match;
+  });
 }
 
 function searchSite(baseUrl, query) {
@@ -687,59 +691,34 @@ function findBestTitle(baseUrl, info, mediaType) {
         4
       );
 
-    function tryQuery(index, bestSoFar) {
-      if (index >= queries.length) {
-        return Promise.resolve(bestSoFar);
-      }
+    return collectValuesBounded(
+      queries.map(function(query) {
+        return function() {
+          return searchSite(
+            cachedBaseUrl || baseUrl,
+            query
+          ).catch(function() { return []; });
+        };
+      }),
+      3,
+      6500
+    ).then(function(groups) {
+      var seen = Object.create(null);
+      var candidates = [];
 
-      return searchSite(
-        cachedBaseUrl || baseUrl,
-        queries[index]
-      ).then(function(items) {
-        items.sort(function(a, b) {
-          return (
-            scoreCandidate(b, info, mediaType) -
-            scoreCandidate(a, info, mediaType)
-          );
+      groups.forEach(function(items) {
+        (Array.isArray(items) ? items : []).forEach(function(item) {
+          if (!item || !item.href || seen[item.href]) return;
+          seen[item.href] = true;
+          candidates.push(item);
         });
-
-        var best =
-          items[0] || null;
-
-        var selected =
-          !bestSoFar ||
-          (
-            best &&
-            scoreCandidate(best, info, mediaType) >
-            scoreCandidate(bestSoFar, info, mediaType)
-          )
-            ? best || bestSoFar
-            : bestSoFar;
-
-        if (
-          selected &&
-          scoreCandidate(
-            selected,
-            info,
-            mediaType
-          ) >= 30
-        ) {
-          return selected;
-        }
-
-        return tryQuery(
-          index + 1,
-          selected
-        );
-      }).catch(function() {
-        return tryQuery(
-          index + 1,
-          bestSoFar
-        );
       });
-    }
 
-    return tryQuery(0, null);
+      candidates.sort(function(a, b) {
+        return scoreCandidate(b, info, mediaType) - scoreCandidate(a, info, mediaType);
+      });
+      return candidates[0] || null;
+    });
   }).then(function(best) {
     if (!best) {
       throw new Error(

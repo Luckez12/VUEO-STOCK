@@ -1,12 +1,12 @@
 {
   "name": "VUEO Stock",
-  "version": "1.12.0",
+  "version": "1.13.0",
   "scrapers": [
     {
       "id": "kisskh",
       "name": "KissKH",
       "description": "Asian drama, series and movie streams with subtitle metadata",
-      "version": "1.2.0",
+      "version": "1.2.1",
       "author": "Luckez",
       "supportedTypes": [
         "movie",
@@ -29,13 +29,14 @@
       ],
       "disabledPlatforms": [],
       "supportsExternalPlayer": true,
-      "notes": "Repo-wide TMDB alias matching V1: canonical/original/alternative/translated titles, with season-aware alias queries and alias-aware candidate scoring."
+      "notes": "Runtime budget alignment: provider now receives the full 20s app runtime instead of the 10s descriptor default, so the existing bounded title/detail/video/subtitle pipeline is not killed before it can return valid links.",
+      "runtimeTimeoutMs": 20000
     },
     {
       "id": "onetouchtv",
       "name": "OneTouchTV",
       "description": "Asian drama, anime, series and movie streams with subtitle metadata",
-      "version": "1.2.0",
+      "version": "1.2.1",
       "author": "Luckez",
       "supportedTypes": [
         "movie",
@@ -58,13 +59,14 @@
       ],
       "disabledPlatforms": [],
       "supportsExternalPlayer": true,
-      "notes": "Repo-wide TMDB alias matching V1: alternative/translated TMDB aliases feed title search, detail scoring and season-aware queries."
+      "notes": "Runtime budget alignment: provider now receives the full 20s app runtime instead of the 10s descriptor default; alias searches and detail verification remain parallel and bounded.",
+      "runtimeTimeoutMs": 20000
     },
     {
       "id": "hdhub4u",
       "name": "HDHub4u",
       "description": "Movie and TV stream provider",
-      "version": "1.2.2",
+      "version": "1.3.0",
       "author": "Luckez",
       "supportedTypes": [
         "movie",
@@ -85,7 +87,7 @@
       "disabledPlatforms": [],
       "supportsExternalPlayer": true,
       "runtimeTimeoutMs": 20000,
-      "notes": "QuickJS compatibility hotfix: removes optional chaining/nullish coalescing that can fail on the embedded runtime, while retaining the native-fetch recursion fix and TMDB alias matching."
+      "notes": "Fast discovery V1 + QuickJS fixes: all alias searches remain covered with bounded concurrency; only the existing confidence-qualified title match can proceed to expensive download extraction, eliminating the old first-result fallback."
     },
     {
       "id": "moviebox",
@@ -119,7 +121,7 @@
       "id": "4khdhub",
       "name": "4KHDHub",
       "description": "Movie and TV stream provider",
-      "version": "1.3.0",
+      "version": "1.4.0",
       "author": "Luckez",
       "supportedTypes": [
         "movie",
@@ -140,13 +142,13 @@
       "disabledPlatforms": [],
       "supportsExternalPlayer": true,
       "runtimeTimeoutMs": 20000,
-      "notes": "Memory-scope rebuild: preserves all discovered host candidates but releases Cheerio DOMs before nested extraction, bounds redirect hops and persistent URL cache, reducing peak heap without intentionally capping servers."
+      "notes": "Fast discovery V1 + memory guard: all alias searches remain covered, but an unrelated search result can no longer fall through into expensive host extraction. Search aliases run concurrently; only title-confident matches proceed."
     },
     {
       "id": "pencurimovie",
       "name": "PencuriMovie",
       "description": "Malaysia and Indonesia movie and TV streams with multi-server playback",
-      "version": "1.4.0",
+      "version": "1.5.0",
       "author": "Luckez",
       "supportedTypes": [
         "movie",
@@ -167,14 +169,14 @@
       ],
       "disabledPlatforms": [],
       "supportsExternalPlayer": true,
-      "notes": "Repo-wide TMDB alias matching V1: aliases are used for direct slugs, site search and candidate scoring; searches stop once a strong match is found.",
+      "notes": "Fast discovery V1: direct permalink candidates and all TMDB alias searches are attempted with bounded concurrency, then the strongest candidate is selected. Existing multi-server extraction remains unchanged.",
       "runtimeTimeoutMs": 20000
     },
     {
       "id": "msm21",
       "name": "MSM21",
       "description": "Malay subtitle movie and TV streams using Zeta player multi-server extraction",
-      "version": "1.3.0",
+      "version": "1.4.0",
       "author": "Luckez",
       "supportedTypes": [
         "movie",
@@ -195,7 +197,7 @@
       ],
       "disabledPlatforms": [],
       "supportsExternalPlayer": true,
-      "notes": "Repo-wide TMDB alias matching V1: aliases are used for direct permalinks, WordPress search and candidate scoring; searches stop once a strong match is found.",
+      "notes": "Fast discovery V1: direct permalink candidates and all TMDB alias searches are attempted with bounded concurrency, then the strongest candidate is selected. This preserves alias coverage while avoiding sequential no-result waits.",
       "runtimeTimeoutMs": 20000
     },
     {

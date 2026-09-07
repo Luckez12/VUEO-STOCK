@@ -87,6 +87,18 @@ for (const scraper of manifest.scrapers) {
     fail('HDHub4u must avoid optional chaining/nullish coalescing for embedded QuickJS compatibility');
   }
 
+  if (['msm21', 'pencurimovie', '4khdhub', 'hdhub4u'].includes(scraper.id) && !source.includes('VUEO_FAST_DISCOVERY_V1')) {
+    fail(`${scraper.filename} is missing the fast-discovery marker`);
+  }
+
+  if (scraper.id === 'hdhub4u' && source.includes('bestMatch || searchResults[0]')) {
+    fail('HDHub4u must not fall through to an unqualified first search result');
+  }
+
+  if (scraper.id === '4khdhub' && /findBestMatch\([\s\S]*?\)\s*\|\|\s*results\[0\]/.test(source)) {
+    fail('4KHDHub must not fall through to an unqualified first search result');
+  }
+
   if (scraper.id === '4khdhub') {
     if (!source.includes('FOURK_MEMORY_SCOPE_GUARD_V1')) {
       fail('4KHDHub is missing the memory-scope guard marker');

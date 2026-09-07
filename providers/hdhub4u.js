@@ -14,6 +14,7 @@ const DOMAINS_URL = "https://raw.githubusercontent.com/phisher98/TVVVV/refs/head
 const DOMAIN_CACHE_TTL = 4 * 60 * 60 * 1000; // 4 hours
 const REQUEST_TIMEOUT_MS = 4500;
 const PROVIDER_BUDGET_MS = 19000;
+// VUEO_FAST_DISCOVERY_V1: all aliases searched concurrently; weak results never enter expensive extraction.
 let domainCacheTimestamp = 0;
 
 const HEADERS = {
@@ -1774,7 +1775,7 @@ function getStreams(
                                 });
                         };
                     }),
-                    2,
+                    4,
                     6500
                 );
             })
@@ -1802,8 +1803,12 @@ function getStreams(
                         requestedSeason
                     );
 
-                const selectedMedia =
-                    bestMatch || searchResults[0];
+                if (!bestMatch) {
+                    console.log('[HDHub4u] no title-confident search result; skipping download extraction');
+                    return [];
+                }
+
+                const selectedMedia = bestMatch;
 
                 return getDownloadLinks(selectedMedia.url)
                     .then(function(result) {

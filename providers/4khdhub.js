@@ -11,6 +11,7 @@ const DOMAINS_URL = 'https://raw.githubusercontent.com/phisher98/TVVVV/refs/head
 const FALLBACK_4KHDHUB_URL = 'https://4khdhub.one';
 const REQUEST_TIMEOUT_MS = 4500;
 const PROVIDER_BUDGET_MS = 19000;
+// VUEO_FAST_DISCOVERY_V1: parallel alias discovery + confidence gate before host extraction.
 const RESOLVED_CACHE_MAX_ENTRIES = 8;
 
 // Direct file validation is disabled by default for Nuvio latency.
@@ -465,10 +466,31 @@ function best4KSimilarity(candidate, aliases) {
   return best;
 }
 
+function isConfident4KMatch(item, query, targetYear, aliases) {
+  if (!item) return false;
+  var expected = aliases && aliases.length ? aliases : [query];
+  var left = normalizeTitle(item.title || '');
+  var exact = expected.some(function(alias) {
+    return left && left === normalizeTitle(alias);
+  });
+  var containment = expected.some(function(alias) {
+    var right = normalizeTitle(alias);
+    return left && right && (left.indexOf(right) !== -1 || right.indexOf(left) !== -1);
+  });
+  var similarity = best4KSimilarity(item.title || '', expected);
+  if (exact || containment || similarity >= 0.46) return true;
+
+  var yearMatch = String(item.year || '').match(/(19|20)\d{2}/);
+  var itemYear = yearMatch ? Number(yearMatch[0]) : 0;
+  var expectedYear = Number(targetYear || 0);
+  return Boolean(expectedYear && itemYear === expectedYear && similarity >= 0.30);
+}
+
 function findBestMatch(results, query, targetYear, mediaType, aliases) {
   if (!results || results.length === 0) return null;
-  if (results.length === 1) return results[0];
-  var scored = results.map(function (r) {
+  var scored = results.filter(function(r) {
+    return isConfident4KMatch(r, query, targetYear, aliases);
+  }).map(function (r) {
     var score = 0;
     var exactAlias =
       (aliases && aliases.length ? aliases : [query])
@@ -517,6 +539,7 @@ function findBestMatch(results, query, targetYear, mediaType, aliases) {
     return { item: r, score: score };
   });
   scored.sort(function (a, b) { return b.score - a.score; });
+  if (!scored.length) return null;
   return scored[0].item;
 }
 
@@ -1637,7 +1660,7 @@ function getStreams(
               });
           };
         }),
-        2,
+        4,
         6500
       ).then(function (groups) {
         var resultSeen = {};
@@ -1670,8 +1693,12 @@ function getStreams(
             tmdb.year,
             type,
             tmdb.aliases
-          ) ||
-          results[0];
+          );
+
+        if (!best) {
+          console.log('[4KHDHub] no title-confident search result; skipping host extraction');
+          return [];
+        }
 
         return loadContent(
           best.url
