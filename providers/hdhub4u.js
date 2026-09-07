@@ -1451,7 +1451,7 @@ function getDownloadLinks(mediaUrl) {
  */
 function getTMDBDetails(tmdbId, mediaType) {
     const endpoint = mediaType === 'tv' ? 'tv' : 'movie';
-    const url = `${TMDB_BASE_URL}/${endpoint}/${tmdbId}?api_key=${TMDB_API_KEY}&append_to_response=external_ids`;
+    const url = `${TMDB_BASE_URL}/${endpoint}/${tmdbId}?api_key=${TMDB_API_KEY}&append_to_response=alternative_titles,translations,external_ids`;
 
     return fetchWithTimeout(url, {
         method: 'GET',
@@ -1476,7 +1476,8 @@ function getTMDBDetails(tmdbId, mediaType) {
                     ? (data.original_name || '')
                     : (data.original_title || ''),
             year: year,
-            imdbId: data.external_ids?.imdb_id || null
+            imdbId: data.external_ids?.imdb_id || null,
+            aliases: collectTmdbAliasesHD(data)
         };
     });
 }
@@ -1504,6 +1505,98 @@ function normalizeTitle(title) {
         // Remove special characters but keep alphanumeric and spaces
         .replace(/[^\w\s]/g, '')
         .trim();
+}
+
+
+/* VUEO_TITLE_PROFILE_V1 */
+function collectTmdbAliasesHD(data) {
+    const output = [];
+    const seen = new Set();
+
+    function add(value, priority) {
+        const text = String(value || '').trim();
+        const key = normalizeTitle(text);
+        if (!text || !key || seen.has(key)) return;
+
+        seen.add(key);
+        output.push({
+            title: text,
+            priority: Number(priority || 0)
+        });
+    }
+
+    add(data && (data.title || data.name), 100);
+    add(data && (data.original_title || data.original_name), 95);
+
+    const alt = data && data.alternative_titles;
+    const altItems =
+        alt && Array.isArray(alt.titles)
+            ? alt.titles
+            : alt && Array.isArray(alt.results)
+                ? alt.results
+                : [];
+
+    altItems.forEach(function(item) {
+        add(
+            item && (item.title || item.name),
+            80
+        );
+    });
+
+    const translations =
+        data &&
+        data.translations &&
+        Array.isArray(data.translations.translations)
+            ? data.translations.translations
+            : [];
+
+    translations.forEach(function(item) {
+        add(
+            item &&
+            item.data &&
+            (
+                item.data.title ||
+                item.data.name
+            ),
+            item && item.iso_639_1 === 'en' ? 88 : 68
+        );
+    });
+
+    output.sort(function(a, b) {
+        return b.priority - a.priority;
+    });
+
+    return output
+        .map(function(item) {
+            return item.title;
+        })
+        .slice(0, 10);
+}
+
+function bestAliasSimilarityHD(candidate, mediaInfo) {
+    const aliases =
+        mediaInfo &&
+        Array.isArray(mediaInfo.aliases) &&
+        mediaInfo.aliases.length
+            ? mediaInfo.aliases
+            : [
+                mediaInfo && mediaInfo.title,
+                mediaInfo && mediaInfo.originalTitle
+            ];
+
+    let best = 0;
+
+    aliases.forEach(function(alias) {
+        best = Math.max(
+            best,
+            calculateTitleSimilarity(
+                candidate,
+                alias
+            )
+        );
+    });
+
+    return best;
 }
 
 /**
@@ -1549,7 +1642,7 @@ function findBestTitleMatch(mediaInfo, searchResults, mediaType, season) {
     let bestScore = 0;
 
     for (const result of searchResults) {
-        let score = calculateTitleSimilarity(mediaInfo.title, result.title);
+        let score = bestAliasSimilarityHD(result.title, mediaInfo);
 
         // Year matching bonus/penalty
         if (mediaInfo.year && result.year) {
@@ -1661,8 +1754,14 @@ function getStreams(
                     queries.push(query);
                 }
 
-                addQuery(mediaInfo.title);
-                addQuery(mediaInfo.originalTitle);
+                (
+                    mediaInfo.aliases || [
+                        mediaInfo.title,
+                        mediaInfo.originalTitle
+                    ]
+                )
+                    .slice(0, 4)
+                    .forEach(addQuery);
 
                 return collectValuesBounded(
                     queries.map(function(query) {

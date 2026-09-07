@@ -273,14 +273,97 @@ function calculateSimilarity(str1, str2) {
   return (maxLen - matrix[len1][len2]) / maxLen;
 }
 
-function findBestMatch(results, query, targetYear, mediaType) {
+
+/* VUEO_TITLE_PROFILE_V1 */
+function collectTmdbAliases4K(data) {
+  var output = [];
+  var seen = {};
+
+  function add(value, priority) {
+    var text = String(value || "").trim();
+    var key = normalizeTitle(text);
+    if (!text || !key || seen[key]) return;
+    seen[key] = true;
+    output.push({ title: text, priority: priority || 0 });
+  }
+
+  add(data && (data.title || data.name), 100);
+  add(data && (data.original_title || data.original_name), 95);
+
+  var alt = data && data.alternative_titles;
+  var items =
+    alt && Array.isArray(alt.titles)
+      ? alt.titles
+      : alt && Array.isArray(alt.results)
+        ? alt.results
+        : [];
+
+  items.forEach(function(item) {
+    add(
+      item && (item.title || item.name),
+      80
+    );
+  });
+
+  var translations =
+    data &&
+    data.translations &&
+    Array.isArray(data.translations.translations)
+      ? data.translations.translations
+      : [];
+
+  translations.forEach(function(item) {
+    add(
+      item &&
+      item.data &&
+      (
+        item.data.title ||
+        item.data.name
+      ),
+      item && item.iso_639_1 === "en" ? 86 : 68
+    );
+  });
+
+  output.sort(function(a, b) {
+    return b.priority - a.priority;
+  });
+
+  return output.map(function(item) {
+    return item.title;
+  }).slice(0, 10);
+}
+
+function best4KSimilarity(candidate, aliases) {
+  var best = 0;
+  (aliases || []).forEach(function(alias) {
+    best = Math.max(
+      best,
+      calculateSimilarity(candidate, alias)
+    );
+  });
+  return best;
+}
+
+function findBestMatch(results, query, targetYear, mediaType, aliases) {
   if (!results || results.length === 0) return null;
   if (results.length === 1) return results[0];
   var scored = results.map(function (r) {
     var score = 0;
-    if (normalizeTitle(r.title) === normalizeTitle(query)) score += 100;
-    var sim = calculateSimilarity(r.title, query); score += sim * 50;
-    if (normalizeTitle(r.title).indexOf(normalizeTitle(query)) !== -1) score += 15; // quick containment bonus
+    var exactAlias =
+      (aliases && aliases.length ? aliases : [query])
+        .some(function(alias) {
+          return normalizeTitle(r.title) === normalizeTitle(alias);
+        });
+    if (exactAlias) score += 100;
+    var sim = best4KSimilarity(r.title, aliases && aliases.length ? aliases : [query]); score += sim * 50;
+    var containment =
+      (aliases && aliases.length ? aliases : [query])
+        .some(function(alias) {
+          var left = normalizeTitle(r.title);
+          var right = normalizeTitle(alias);
+          return left && right && (left.indexOf(right) !== -1 || right.indexOf(left) !== -1);
+        });
+    if (containment) score += 15;
     var lengthDiff = Math.abs(r.title.length - query.length);
     score += Math.max(0, 10 - lengthDiff / 5);
     if (/(19|20)\d{2}/.test(r.title)) score += 5;
@@ -1360,14 +1443,48 @@ function extractStreamingLinks(
 
 // TMDB helper
 function getTMDBDetails(tmdbId, mediaType) {
-  var url = 'https://api.themoviedb.org/3/' + mediaType + '/' + tmdbId + '?api_key=' + TMDB_API_KEY;
-  return makeRequest(url).then(function (res) { return res.json(); }).then(function (data) {
-    if (mediaType === 'movie') {
-      return { title: data.title, original_title: data.original_title, year: data.release_date ? data.release_date.split('-')[0] : null };
-    } else {
-      return { title: data.name, original_title: data.original_name, year: data.first_air_date ? data.first_air_date.split('-')[0] : null };
-    }
-  }).catch(function () { return null; });
+  var url =
+    'https://api.themoviedb.org/3/' +
+    mediaType +
+    '/' +
+    tmdbId +
+    '?api_key=' +
+    TMDB_API_KEY +
+    '&append_to_response=alternative_titles,translations,external_ids';
+
+  return makeRequest(url)
+    .then(function(res) {
+      return res.json();
+    })
+    .then(function(data) {
+      return {
+        title:
+          mediaType === 'movie'
+            ? data.title
+            : data.name,
+        original_title:
+          mediaType === 'movie'
+            ? data.original_title
+            : data.original_name,
+        year:
+          (
+            mediaType === 'movie'
+              ? data.release_date
+              : data.first_air_date
+          )
+            ? (
+                mediaType === 'movie'
+                  ? data.release_date
+                  : data.first_air_date
+              ).split('-')[0]
+            : null,
+        aliases:
+          collectTmdbAliases4K(data)
+      };
+    })
+    .catch(function() {
+      return null;
+    });
 }
 
 // Main entry – Promise-based, no async/await
@@ -1543,8 +1660,12 @@ function getStreams(
         );
       }
 
-      addQuery(tmdb.title);
-      addQuery(tmdb.original_title);
+      (tmdb.aliases || [
+        tmdb.title,
+        tmdb.original_title
+      ])
+        .slice(0, 4)
+        .forEach(addQuery);
 
       return collectValuesBounded(
         queries.map(function (query) {
@@ -1586,7 +1707,8 @@ function getStreams(
             results,
             tmdb.title,
             tmdb.year,
-            type
+            type,
+            tmdb.aliases
           ) ||
           results[0];
 

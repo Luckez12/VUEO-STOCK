@@ -497,6 +497,190 @@ function titleScore(candidate, expected) {
   return Math.round((recall * 0.7 + precision * 0.3) * 72);
 }
 
+
+/* VUEO_TITLE_PROFILE_V1 */
+function collectTmdbAliases(data, mediaType) {
+  var output = [];
+  var seen = {};
+
+  function add(value, priority) {
+    var text = String(value || "").trim();
+    var key = normalizeTitle(text);
+    if (!text || !key || seen[key]) return;
+
+    seen[key] = true;
+    output.push({
+      title: text,
+      priority: Number(priority || 0)
+    });
+  }
+
+  add(data && (data.title || data.name), 100);
+  add(
+    data &&
+    (
+      data.original_title ||
+      data.original_name
+    ),
+    95
+  );
+
+  var altRoot =
+    data &&
+    data.alternative_titles;
+
+  var altItems =
+    altRoot &&
+    (
+      Array.isArray(altRoot.titles)
+        ? altRoot.titles
+        : Array.isArray(altRoot.results)
+          ? altRoot.results
+          : []
+    );
+
+  altItems.forEach(function(item) {
+    if (!item) return;
+
+    var country =
+      String(
+        item.iso_3166_1 || ""
+      ).toUpperCase();
+
+    var boost =
+      country === "US" ||
+      country === "GB"
+        ? 86
+        : country === "MY" ||
+          country === "ID"
+          ? 82
+          : 72;
+
+    add(
+      item.title ||
+      item.name,
+      boost
+    );
+  });
+
+  var translations =
+    data &&
+    data.translations &&
+    Array.isArray(
+      data.translations.translations
+    )
+      ? data.translations.translations
+      : [];
+
+  translations.forEach(function(item) {
+    var row =
+      item &&
+      item.data &&
+      typeof item.data === "object"
+        ? item.data
+        : {};
+
+    var lang =
+      String(
+        item &&
+        item.iso_639_1 ||
+        ""
+      ).toLowerCase();
+
+    var boost =
+      lang === "en"
+        ? 88
+        : lang === "ms" ||
+          lang === "id"
+          ? 80
+          : 68;
+
+    add(
+      row.title ||
+      row.name,
+      boost
+    );
+  });
+
+  output.sort(function(a, b) {
+    return b.priority - a.priority;
+  });
+
+  return output
+    .map(function(item) {
+      return item.title;
+    })
+    .slice(0, 12);
+}
+
+function bestAliasTitleScore(candidate, info) {
+  var aliases =
+    info &&
+    Array.isArray(info.aliases) &&
+    info.aliases.length
+      ? info.aliases
+      : [
+          info && info.title,
+          info && info.originalTitle
+        ];
+
+  var best = 0;
+
+  aliases.forEach(function(alias) {
+    best = Math.max(
+      best,
+      titleScore(
+        candidate,
+        alias
+      )
+    );
+  });
+
+  return best;
+}
+
+function buildAliasQueries(info, limit) {
+  var output = [];
+  var seen = {};
+
+  var aliases =
+    info &&
+    Array.isArray(info.aliases)
+      ? info.aliases
+      : [
+          info && info.title,
+          info && info.originalTitle
+        ];
+
+  aliases.forEach(function(alias) {
+    var text =
+      String(alias || "")
+        .trim();
+
+    var key =
+      normalizeTitle(text);
+
+    if (
+      !text ||
+      !key ||
+      seen[key]
+    ) {
+      return;
+    }
+
+    seen[key] = true;
+    output.push(text);
+  });
+
+  return output.slice(
+    0,
+    Math.max(
+      1,
+      Number(limit || 4)
+    )
+  );
+}
+
 function extractSeasonFromTitle(title) {
   var normalized = normalizeTitle(title);
   var patterns = [
@@ -512,10 +696,11 @@ function extractSeasonFromTitle(title) {
 }
 
 function scoreCandidate(item, info, mediaType, season) {
-  var score = Math.max(
-    titleScore(itemTitle(item), info.title),
-    titleScore(itemTitle(item), info.originalTitle)
-  );
+  var score =
+    bestAliasTitleScore(
+      itemTitle(item),
+      info
+    );
 
   var directTmdb = firstValue(item, ["tmdbId", "tmdb_id", "themoviedbId", "themoviedb_id"]);
   if (directTmdb && String(directTmdb) === String(info.tmdbId || "")) score += 200;
@@ -566,13 +751,14 @@ function scoreCandidate(item, info, mediaType, season) {
 function getTmdbInfo(tmdbId, mediaType) {
   var endpoint = mediaType === "movie" ? "movie" : "tv";
   var url = "https://api.themoviedb.org/3/" + endpoint + "/" + encodeURIComponent(tmdbId) +
-    "?api_key=" + TMDB_API_KEY;
+    "?api_key=" + TMDB_API_KEY + "&append_to_response=alternative_titles,translations,external_ids";
   return fetchJson(url, {}).then(function(data) {
     return {
       tmdbId: String(tmdbId),
       title: data.title || data.name || "",
       originalTitle: data.original_title || data.original_name || "",
-      year: String(data.release_date || data.first_air_date || "").split("-")[0]
+      year: String(data.release_date || data.first_air_date || "").split("-")[0],
+      aliases: collectTmdbAliases(data, mediaType)
     };
   });
 }
@@ -610,18 +796,20 @@ function getDetail(id) {
 
 function findBestTitle(info, mediaType, season) {
   var requestedSeason = mediaType === "tv" ? Number(season || 1) : 0;
-  var queries = [info.title];
-
-  if (info.originalTitle && normalizeTitle(info.originalTitle) !== normalizeTitle(info.title)) {
-    queries.push(info.originalTitle);
-  }
+  var aliases = buildAliasQueries(info, 5);
+  var queries = aliases.slice();
 
   if (requestedSeason > 1) {
-    queries.push(info.title + " Season " + requestedSeason);
-    if (info.originalTitle && normalizeTitle(info.originalTitle) !== normalizeTitle(info.title)) {
-      queries.push(info.originalTitle + " Season " + requestedSeason);
-    }
+    aliases.slice(0, 3).forEach(function(alias) {
+      queries.unshift(
+        alias +
+        " Season " +
+        requestedSeason
+      );
+    });
   }
+
+  queries = queries.slice(0, 7);
 
   return Promise.all(queries.map(function(query) { return searchOneTouch(query, 1); })).then(function(groups) {
     var seen = {};
@@ -660,8 +848,10 @@ function findBestTitle(info, mediaType, season) {
 
         score = Math.max(
           score,
-          titleScore(detailTitle, info.title) + 20,
-          titleScore(detailTitle, info.originalTitle) + 20
+          bestAliasTitleScore(
+            detailTitle,
+            info
+          ) + 20
         );
 
         var detailType =
