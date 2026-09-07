@@ -1,6 +1,6 @@
 {
   "name": "VUEO Stock",
-  "version": "1.9.6",
+  "version": "1.9.7",
   "scrapers": [
     {
       "id": "kisskh",
@@ -146,7 +146,7 @@
       "id": "msm21",
       "name": "MSM21",
       "description": "Malay subtitle movie and TV streams using Zeta player multi-server extraction",
-      "version": "1.1.2",
+      "version": "1.2.0",
       "author": "Luckez",
       "supportedTypes": [
         "movie",
@@ -167,7 +167,7 @@
       ],
       "disabledPlatforms": [],
       "supportsExternalPlayer": true,
-      "notes": "Native WebView playback headers now mirror Cloudstream MSM21: unsafe transport headers are removed, Cookie is preserved, and Referer is forced to the player mirror URL. Direct m3u8/mp4/m4v captures are preferred over /sora/ intermediates.",
+      "notes": "Nuvio MSM21 now evaluates every Zeta player option instead of hard-capping 8 fast + 6 fallback sources. Standard extractors are collected with bounded concurrency and merged/deduplicated; only the expensive native WebView lane remains capped to 3 unresolved mirrors. Multiple mirrors and subtitles can contribute to the final result instead of first-success discarding the rest.",
       "runtimeTimeoutMs": 20000
     },
     {
