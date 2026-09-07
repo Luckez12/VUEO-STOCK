@@ -53,7 +53,7 @@ function withSoftTimeout(promise, timeoutMs, label) {
 
 function fetchWithTimeout(url, options, timeoutMs) {
     return withSoftTimeout(
-        fetchWithTimeout(url, options || {}),
+        fetch(url, options || {}),
         timeoutMs || REQUEST_TIMEOUT_MS,
         'HDHub4u HTTP'
     );
@@ -1509,6 +1509,7 @@ function normalizeTitle(title) {
 
 
 /* VUEO_TITLE_PROFILE_V1 */
+/* HDHUB4U_FETCH_RECURSION_HOTFIX_V1 */
 function collectTmdbAliasesHD(data) {
     const output = [];
     const seen = new Set();

@@ -1,6 +1,6 @@
 {
   "name": "VUEO Stock",
-  "version": "1.11.0",
+  "version": "1.11.1",
   "scrapers": [
     {
       "id": "kisskh",
@@ -64,7 +64,7 @@
       "id": "hdhub4u",
       "name": "HDHub4u",
       "description": "Movie and TV stream provider",
-      "version": "1.2.0",
+      "version": "1.2.1",
       "author": "Luckez",
       "supportedTypes": [
         "movie",
@@ -85,7 +85,7 @@
       "disabledPlatforms": [],
       "supportsExternalPlayer": true,
       "runtimeTimeoutMs": 20000,
-      "notes": "Repo-wide TMDB alias matching V1: TMDB alternative/translated titles are searched and scored while retaining bounded Nuvio extraction."
+      "notes": "Hotfix: fixes recursive fetchWithTimeout wrapper that caused QuickJS stack overflow and could freeze VUEO. Keeps repo-wide TMDB alias matching and bounded extraction."
     },
     {
       "id": "moviebox",

@@ -75,6 +75,13 @@ for (const scraper of manifest.scrapers) {
   if (!source.includes('VUEO_TITLE_PROFILE_V1')) {
     fail(`${scraper.filename} is missing the repo-wide TMDB title profile marker`);
   }
+
+  if (
+    scraper.id === 'hdhub4u' &&
+    /function\s+fetchWithTimeout\s*\([^)]*\)\s*\{[\s\S]*?fetchWithTimeout\s*\(\s*url\s*,\s*options\s*\|\|\s*\{\}\s*\)/.test(source)
+  ) {
+    fail('HDHub4u fetchWithTimeout must call native fetch, not itself');
+  }
   const moduleObject = { exports: {} };
 
   const sandbox = {
