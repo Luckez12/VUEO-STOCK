@@ -1,5 +1,201 @@
 {
   "name": "VUEO Stock",
-  "version": "1.0.0",
-  "scrapers": []
+  "version": "1.9.5",
+  "scrapers": [
+    {
+      "id": "kisskh",
+      "name": "KissKH",
+      "description": "Asian drama, series and movie streams with subtitle metadata",
+      "version": "1.0.1",
+      "author": "Luckez",
+      "supportedTypes": [
+        "movie",
+        "tv"
+      ],
+      "filename": "providers/kisskh.js",
+      "enabled": true,
+      "limited": false,
+      "formats": [
+        "m3u8",
+        "mp4"
+      ],
+      "logo": "https://www.google.com/s2/favicons?domain=kisskh.id&sz=128",
+      "contentLanguage": [
+        "en",
+        "ko",
+        "zh",
+        "th",
+        "ja"
+      ],
+      "disabledPlatforms": [],
+      "supportsExternalPlayer": true,
+      "notes": "Supports movies, TV episodes, direct MP4 or HLS streams, playback headers and available KissKH subtitle tracks."
+    },
+    {
+      "id": "onetouchtv",
+      "name": "OneTouchTV",
+      "description": "Asian drama, anime, series and movie streams with subtitle metadata",
+      "version": "1.0.2",
+      "author": "Luckez",
+      "supportedTypes": [
+        "movie",
+        "tv"
+      ],
+      "filename": "providers/onetouchtv.js",
+      "enabled": true,
+      "limited": false,
+      "formats": [
+        "m3u8",
+        "mp4"
+      ],
+      "logo": "https://www.google.com/s2/favicons?domain=onetouchtv.co&sz=128",
+      "contentLanguage": [
+        "en",
+        "ko",
+        "zh",
+        "th",
+        "ja"
+      ],
+      "disabledPlatforms": [],
+      "supportsExternalPlayer": true,
+      "notes": "Supports movies and TV episodes through the OneTouchTV encrypted API, including direct stream sources, playback headers and available subtitle tracks."
+    },
+    {
+      "id": "hdhub4u",
+      "name": "HDHub4u",
+      "description": "Movie and TV stream provider",
+      "version": "1.0.0",
+      "author": "Luckez",
+      "supportedTypes": [
+        "movie",
+        "tv"
+      ],
+      "filename": "providers/hdhub4u.js",
+      "enabled": true
+    },
+    {
+      "id": "moviebox",
+      "name": "MovieBox",
+      "description": "Movie and TV streams from the current MovieBox H5 web API mirror pool",
+      "version": "2.4.0",
+      "author": "Luckez",
+      "supportedTypes": [
+        "movie",
+        "tv"
+      ],
+      "filename": "providers/moviebox.js",
+      "enabled": true,
+      "limited": false,
+      "formats": [
+        "mp4",
+        "m3u8"
+      ],
+      "logo": "https://www.google.com/s2/favicons?domain=moviebox.ph&sz=128",
+      "contentLanguage": [
+        "en",
+        "ms",
+        "id"
+      ],
+      "disabledPlatforms": [],
+      "supportsExternalPlayer": true,
+      "runtimeTimeoutMs": 20000,
+      "notes": "Direct current MovieBox watch-page resolver. Removes TMDB and H5 search from the critical path because MovieBox watch URLs already use the TMDB ID passed by VUEO. Movies open /watch/movie/<id>/ directly. TV opens /watch/tv/<id>/ and selects season/episode through native WebView interaction."
+    },
+    {
+      "id": "4khdhub",
+      "name": "4KHDHub",
+      "description": "Movie and TV stream provider",
+      "version": "1.0.0",
+      "author": "Luckez",
+      "supportedTypes": [
+        "movie",
+        "tv"
+      ],
+      "filename": "providers/4khdhub.js",
+      "enabled": true
+    },
+    {
+      "id": "pencurimovie",
+      "name": "PencuriMovie",
+      "description": "Malaysia and Indonesia movie and TV streams with multi-server playback",
+      "version": "1.2.2",
+      "author": "Luckez",
+      "supportedTypes": [
+        "movie",
+        "tv"
+      ],
+      "filename": "providers/pencurimovie.js",
+      "enabled": true,
+      "limited": false,
+      "formats": [
+        "m3u8",
+        "mp4"
+      ],
+      "logo": "https://www.google.com/s2/favicons?domain=pencurimovie.sbs&sz=128",
+      "contentLanguage": [
+        "ms",
+        "id",
+        "en"
+      ],
+      "disabledPlatforms": [],
+      "supportsExternalPlayer": true,
+      "notes": "Native WebView playback headers are sanitised for Media3 playback while keeping Cookie and the exact player-mirror Referer. Direct media captures are preferred over intermediate /sora/ URLs.",
+      "runtimeTimeoutMs": 20000
+    },
+    {
+      "id": "msm21",
+      "name": "MSM21",
+      "description": "Malay subtitle movie and TV streams using Zeta player multi-server extraction",
+      "version": "1.1.2",
+      "author": "Luckez",
+      "supportedTypes": [
+        "movie",
+        "tv"
+      ],
+      "filename": "providers/msm21.js",
+      "enabled": true,
+      "limited": false,
+      "formats": [
+        "m3u8",
+        "mp4"
+      ],
+      "logo": "https://www.google.com/s2/favicons?domain=pencurimoviesubmalay26.site&sz=128",
+      "contentLanguage": [
+        "ms",
+        "en",
+        "id"
+      ],
+      "disabledPlatforms": [],
+      "supportsExternalPlayer": true,
+      "notes": "Native WebView playback headers now mirror Cloudstream MSM21: unsafe transport headers are removed, Cookie is preserved, and Referer is forced to the player mirror URL. Direct m3u8/mp4/m4v captures are preferred over /sora/ intermediates.",
+      "runtimeTimeoutMs": 20000
+    },
+    {
+      "id": "cinemode",
+      "name": "CineMode",
+      "description": "Movie and TV stream resolver for the CineMode streaming PWA",
+      "version": "1.0.3",
+      "author": "Luckez",
+      "supportedTypes": [
+        "movie",
+        "tv"
+      ],
+      "filename": "providers/cinemode.js",
+      "enabled": true,
+      "limited": false,
+      "formats": [
+        "m3u8",
+        "mp4",
+        "m4v"
+      ],
+      "logo": "https://www.google.com/s2/favicons?domain=cinemode.fun&sz=128",
+      "contentLanguage": [
+        "en"
+      ],
+      "disabledPlatforms": [],
+      "supportsExternalPlayer": true,
+      "runtimeTimeoutMs": 20000,
+      "notes": "Final CineMode resolver. Does not guess internal CineMode routes. Loads the homepage, obtains the TMDB title, drives CineMode search UI, opens the matching title, interacts with Watch/Play/Skip/Close controls, and captures native WebView media requests. Requires VUEO Search Fix 5."
+    }
+  ]
 }
