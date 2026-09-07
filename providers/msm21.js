@@ -897,6 +897,79 @@ function firstNonEmpty(tasks, timeoutMs) {
   });
 }
 
+
+function collectValuesBounded(factories, concurrency, timeoutMs) {
+  var jobs = Array.isArray(factories) ? factories : [];
+  if (!jobs.length) return Promise.resolve([]);
+
+  var limit = Math.max(1, Number(concurrency || 1));
+
+  return new Promise(function(resolve) {
+    var output = [];
+    var next = 0;
+    var active = 0;
+    var finished = false;
+
+    var timer = setTimeout(function() {
+      finish();
+    }, Math.max(1, Number(timeoutMs || 1)));
+
+    function finish() {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      resolve(output);
+    }
+
+    function pump() {
+      if (finished) return;
+
+      if (next >= jobs.length && active === 0) {
+        finish();
+        return;
+      }
+
+      while (
+        !finished &&
+        active < limit &&
+        next < jobs.length
+      ) {
+        var factory = jobs[next++];
+        active += 1;
+
+        Promise.resolve()
+          .then(factory)
+          .then(function(value) {
+            if (!finished && value !== undefined && value !== null) {
+              output.push(value);
+            }
+          })
+          .catch(function() {})
+          .then(function() {
+            active -= 1;
+            pump();
+          });
+      }
+    }
+
+    pump();
+  });
+}
+
+function collectResolvedBounded(factories, concurrency, timeoutMs) {
+  return collectValuesBounded(
+    factories,
+    concurrency,
+    timeoutMs
+  ).then(function(results) {
+    var merged = emptyResolved();
+    results.forEach(function(result) {
+      mergeResolved(merged, result || emptyResolved());
+    });
+    return merged;
+  });
+}
+
 function unescapeScriptText(value) {
   return decodeHtml(String(value || ""))
     .replace(/\\u003a/gi, ":")
@@ -1889,43 +1962,46 @@ function scanExternalPlayerScripts(html, pageUrl, referer) {
   var scripts = extractExternalScriptUrls(html, pageUrl);
   if (!scripts.length) return Promise.resolve(emptyResolved());
 
-  return firstNonEmpty(
+  return collectResolvedBounded(
     scripts.map(function(scriptUrl) {
-      return requestRaw(
-        scriptUrl,
-        {
-          headers: {
-            "Referer": pageUrl,
-            "Accept": "*/*"
-          },
-          redirect: "follow"
-        },
-        1100,
-        "MSM21 player script " + scriptUrl
-      ).then(function(script) {
-        var resolved = resolvedFromText(
-          script.text,
-          script.url || scriptUrl,
+      return function() {
+        return requestRaw(
+          scriptUrl,
           {
-            "Referer": pageUrl
-          }
-        );
-
-        if (resolved.streams.length) {
-          console.log(
-            "[MSM21] script stream hit host=" + hostOf(script.url || scriptUrl)
+            headers: {
+              "Referer": pageUrl,
+              "Accept": "*/*"
+            },
+            redirect: "follow"
+          },
+          1100,
+          "MSM21 player script " + scriptUrl
+        ).then(function(script) {
+          var resolved = resolvedFromText(
+            script.text,
+            script.url || scriptUrl,
+            {
+              "Referer": pageUrl
+            }
           );
-        }
-        return resolved;
-      }).catch(function() {
-        return emptyResolved();
-      });
+
+          if (resolved.streams.length) {
+            console.log(
+              "[MSM21] script stream hit host=" + hostOf(script.url || scriptUrl)
+            );
+          }
+          return resolved;
+        }).catch(function() {
+          return emptyResolved();
+        });
+      };
     }),
-    1350
+    2,
+    1700
   );
 }
 
-function extractGenericHost(url, referer, depth) {
+function extractGenericHost(url, referer, depth, allowWebView) {
   return requestRaw(url, {
     headers: referer ? { "Referer": referer } : {},
     redirect: "follow"
@@ -1951,19 +2027,23 @@ function extractGenericHost(url, referer, depth) {
         var nested = extractIframes(result.text, finalUrl).slice(0, 2);
         if (!nested.length) return resolved;
 
-        return firstNonEmpty(
+        return collectResolvedBounded(
           nested.map(function(child) {
-            return loadExtractorEquivalent(
-              child,
-              finalUrl,
-              Number(depth || 0) + 1
-            ).catch(function() {
-              return emptyResolved();
-            });
+            return function() {
+              return loadExtractorEquivalent(
+                child,
+                finalUrl,
+                Number(depth || 0) + 1,
+                allowWebView
+              ).catch(function() {
+                return emptyResolved();
+              });
+            };
           }),
-          1700
-        ).then(function(child) {
-          mergeResolved(resolved, child);
+          2,
+          1900
+        ).then(function(children) {
+          mergeResolved(resolved, children);
           return resolved;
         });
       });
@@ -2042,7 +2122,7 @@ function resolveWithNativeWebView(url, referer, label) {
 
   return globalThis.webviewResolve(absolute, {
     referer: referer || absolute,
-    timeoutMs: 13000,
+    timeoutMs: 6500,
     finishAfterFirstMs: 600,
     clickDelaysMs: [
       650,
@@ -2050,9 +2130,7 @@ function resolveWithNativeWebView(url, referer, label) {
       2200,
       3400,
       5000,
-      7000,
-      9500,
-      12000
+      6200
     ],
     match: [
       "/sora/",
@@ -2152,7 +2230,7 @@ function extractorNameFor(url) {
   return "Generic";
 }
 
-function dispatchExtractor(url, referer, depth) {
+function dispatchExtractor(url, referer, depth, allowWebView) {
   var name = extractorNameFor(url);
   console.log("[MSM21] extractor=" + name + " host=" + hostOf(url));
 
@@ -2166,9 +2244,11 @@ function dispatchExtractor(url, referer, depth) {
   else if (name === "Vidmoly") work = extractVidmoly(url, referer);
   else if (name === "LuluStream") work = extractLulu(url, referer);
   else if (name === "Voe") work = extractVoe(url, referer);
-  else if (name === "ByseSX") work = extractGenericHost(url, referer, depth || 0);
-  else if (name === "BrowserPlayer") work = resolveWithNativeWebView(url, referer, "BrowserPlayer");
-  else work = extractGenericHost(url, referer, depth || 0);
+  else if (name === "ByseSX") work = extractGenericHost(url, referer, depth || 0, allowWebView);
+  else if (name === "BrowserPlayer") work = allowWebView === false
+    ? emptyResolved()
+    : resolveWithNativeWebView(url, referer, "BrowserPlayer");
+  else work = extractGenericHost(url, referer, depth || 0, allowWebView);
 
   return Promise.resolve(work).then(function(resolved) {
     var streams = resolved && Array.isArray(resolved.streams) ? resolved.streams.length : 0;
@@ -2180,7 +2260,7 @@ function dispatchExtractor(url, referer, depth) {
      */
     if (streams) return resolved || emptyResolved();
 
-    return extractGenericHost(url, referer, 1)
+    return extractGenericHost(url, referer, 1, allowWebView)
       .catch(function() {
         return resolved || emptyResolved();
       })
@@ -2192,6 +2272,10 @@ function dispatchExtractor(url, referer, depth) {
 
         if (genericStreams) return genericResolved;
 
+        if (allowWebView === false) {
+          return genericResolved || resolved || emptyResolved();
+        }
+
         return resolveWithNativeWebView(
           url,
           referer,
@@ -2201,7 +2285,7 @@ function dispatchExtractor(url, referer, depth) {
   });
 }
 
-function loadExtractorEquivalent(url, referer, depth) {
+function loadExtractorEquivalent(url, referer, depth, allowWebView) {
   var absolute = safeUrl(url, referer);
   if (!absolute) return Promise.resolve(emptyResolved());
 
@@ -2238,7 +2322,7 @@ function loadExtractorEquivalent(url, referer, depth) {
       "[MSM21] iframe=" + hostOf(absolute) +
       (finalUrl !== absolute ? " redirect=" + hostOf(finalUrl) : "")
     );
-    return dispatchExtractor(finalUrl, referer || absolute, depth || 0);
+    return dispatchExtractor(finalUrl, referer || absolute, depth || 0, allowWebView);
   });
 }
 
@@ -2254,8 +2338,8 @@ function attachMirrorLabel(resolved, mirror) {
   return output;
 }
 
-function resolveMirror(mirror, pageUrl) {
-  return loadExtractorEquivalent(mirror.url, pageUrl, 0)
+function resolveMirror(mirror, pageUrl, allowWebView) {
+  return loadExtractorEquivalent(mirror.url, pageUrl, 0, allowWebView)
     .then(function(resolved) {
       return attachMirrorLabel(resolved, mirror);
     })
@@ -2269,21 +2353,56 @@ function resolveMirror(mirror, pageUrl) {
     });
 }
 
-function resolveOption(option, pageUrl) {
+function resolveOption(option, pageUrl, allowWebView) {
   return fetchMirrors(option, pageUrl).then(function(mirrors) {
-    if (!mirrors.length) return { streams: [], subtitles: [] };
-    return firstNonEmpty(
-      mirrors.slice(0, 3).map(function(mirror) {
-        return resolveMirror(mirror, pageUrl);
+    if (!mirrors.length) return emptyResolved();
+
+    return collectResolvedBounded(
+      mirrors.map(function(mirror) {
+        return function() {
+          return resolveMirror(
+            mirror,
+            pageUrl,
+            allowWebView
+          );
+        };
       }),
-      15500
+      2,
+      6500
     );
   });
 }
 
+function webViewMirrorPriority(mirror) {
+  var value =
+    (
+      String(mirror && mirror.label || "") +
+      " " +
+      String(mirror && mirror.url || "")
+    ).toLowerCase();
+
+  if (value.indexOf("abyss") !== -1) return 0;
+  if (value.indexOf("playerx") !== -1) return 1;
+  if (value.indexOf("veev") !== -1) return 2;
+  if (extractorNameFor(mirror && mirror.url) === "BrowserPlayer") return 3;
+  return 4;
+}
+
+function uniqueMirrors(mirrors) {
+  var seen = Object.create(null);
+  return (mirrors || []).filter(function(mirror) {
+    var url = String(mirror && mirror.url || "").trim();
+    if (!url || seen[url]) return false;
+    seen[url] = true;
+    return true;
+  });
+}
 function resolvePlayback(html, pageUrl) {
   var options = parsePlayerOptions(html);
-  var staticMirrors = collectStaticMirrors(html, pageUrl);
+  var staticMirrors =
+    uniqueMirrors(
+      collectStaticMirrors(html, pageUrl)
+    );
 
   console.log(
     "[MSM21] options=" +
@@ -2297,48 +2416,200 @@ function resolvePlayback(html, pageUrl) {
     );
   }
 
-  var fast = options
-    .filter(isFastOption)
-    .sort(function(a, b) { return fastPriority(a) - fastPriority(b); })
-    .slice(0, 8);
-
-  var preferredFallback = options
-    .slice()
-    .sort(function(a, b) { return fallbackPriority(a) - fallbackPriority(b); })
-    .slice(0, 6);
-
-  var candidates = [];
+  var uniqueOptions = [];
   var optionSeen = Object.create(null);
 
-  fast.concat(preferredFallback).forEach(function(option) {
+  options.forEach(function(option) {
     var key = [option.post, option.nume, option.type].join("|");
     if (optionSeen[key]) return;
     optionSeen[key] = true;
-    candidates.push(option);
+    uniqueOptions.push(option);
   });
 
-  var tasks = [];
+  var fast = uniqueOptions
+    .filter(isFastOption)
+    .sort(function(a, b) {
+      return fastPriority(a) - fastPriority(b);
+    });
 
-  staticMirrors.slice(0, 3).forEach(function(mirror) {
-    tasks.push(resolveMirror(mirror, pageUrl));
+  var fastKeys = Object.create(null);
+  fast.forEach(function(option) {
+    fastKeys[
+      [option.post, option.nume, option.type].join("|")
+    ] = true;
   });
 
-  candidates.forEach(function(option) {
-    tasks.push(resolveOption(option, pageUrl));
-  });
+  var fallback = uniqueOptions
+    .filter(function(option) {
+      return !fastKeys[
+        [option.post, option.nume, option.type].join("|")
+      ];
+    })
+    .sort(function(a, b) {
+      return fallbackPriority(a) - fallbackPriority(b);
+    });
 
-  if (!tasks.length) {
-    return Promise.resolve({ streams: [], subtitles: [] });
-  }
+  var orderedOptions =
+    fast.concat(fallback);
 
   /*
-   * Cloudstream starts several native hosts concurrently. Doing the same here
-   * prevents a dead BrowserPlayer mirror from consuming the whole provider
-   * budget before another server is tried.
+   * No fixed 8+6 option cap anymore. Every Zeta option is eligible.
+   * Nuvio still has a ~20s provider budget, so work is bounded by
+   * concurrency/time rather than silently deleting options by index.
    */
-  return firstNonEmpty(tasks, 16500);
-}
+  var factories = [];
 
+  if (staticMirrors.length) {
+    factories.push(function() {
+      return collectValuesBounded(
+        staticMirrors.map(function(mirror) {
+          return function() {
+            return resolveMirror(
+              mirror,
+              pageUrl,
+              false
+            ).then(function(resolved) {
+              return {
+                mirror: mirror,
+                resolved: resolved
+              };
+            });
+          };
+        }),
+        3,
+        7200
+      );
+    });
+  }
+
+  orderedOptions.forEach(function(option) {
+    factories.push(function() {
+      return fetchMirrors(
+        option,
+        pageUrl
+      ).then(function(mirrors) {
+        mirrors =
+          uniqueMirrors(mirrors);
+
+        return collectValuesBounded(
+          mirrors.map(function(mirror) {
+            return function() {
+              return resolveMirror(
+                mirror,
+                pageUrl,
+                false
+              ).then(function(resolved) {
+                return {
+                  mirror: mirror,
+                  resolved: resolved
+                };
+              });
+            };
+          }),
+          2,
+          6500
+        );
+      });
+    });
+  });
+
+  if (!factories.length) {
+    return Promise.resolve(emptyResolved());
+  }
+
+  return collectValuesBounded(
+    factories,
+    3,
+    9800
+  ).then(function(groups) {
+    var merged = emptyResolved();
+    var allMirrors = [];
+    var successful = Object.create(null);
+
+    groups.forEach(function(group) {
+      (Array.isArray(group) ? group : [])
+        .forEach(function(entry) {
+          if (!entry || !entry.mirror) return;
+
+          allMirrors.push(entry.mirror);
+
+          var resolved =
+            entry.resolved || emptyResolved();
+
+          mergeResolved(
+            merged,
+            resolved
+          );
+
+          if (
+            resolved.streams &&
+            resolved.streams.length
+          ) {
+            successful[entry.mirror.url] = true;
+          }
+        });
+    });
+
+    allMirrors =
+      uniqueMirrors(
+        staticMirrors.concat(allMirrors)
+      );
+
+    var unresolved =
+      allMirrors
+        .filter(function(mirror) {
+          return !successful[mirror.url];
+        })
+        .sort(function(a, b) {
+          return (
+            webViewMirrorPriority(a) -
+            webViewMirrorPriority(b)
+          );
+        });
+
+    console.log(
+      "[MSM21] standard streams=" +
+      merged.streams.length +
+      " unresolved=" +
+      unresolved.length
+    );
+
+    if (
+      !nativeWebViewAvailable() ||
+      !unresolved.length
+    ) {
+      return merged;
+    }
+
+    /*
+     * WebView is the expensive fallback. Keep only this lane capped,
+     * matching the proven Cloudstream strategy.
+     */
+    var webViewCandidates =
+      unresolved.slice(0, 3);
+
+    return collectResolvedBounded(
+      webViewCandidates.map(function(mirror) {
+        return function() {
+          return resolveMirror(
+            mirror,
+            pageUrl,
+            true
+          );
+        };
+      }),
+      2,
+      6800
+    ).then(function(webViewResolved) {
+      mergeResolved(
+        merged,
+        webViewResolved
+      );
+
+      return merged;
+    });
+  });
+}
 function buildStreams(resolved, info, mediaType, season, episode) {
   var subtitles = resolved && Array.isArray(resolved.subtitles)
     ? resolved.subtitles
