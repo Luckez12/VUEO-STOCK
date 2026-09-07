@@ -1,6 +1,6 @@
 {
   "name": "VUEO Stock",
-  "version": "1.10.2",
+  "version": "1.10.3",
   "scrapers": [
     {
       "id": "kisskh",
@@ -202,7 +202,7 @@
       "id": "cinemode",
       "name": "CineMode",
       "description": "Movie and TV stream resolver for the CineMode streaming PWA",
-      "version": "1.0.3",
+      "version": "1.1.0",
       "author": "Luckez",
       "supportedTypes": [
         "movie",
@@ -223,7 +223,7 @@
       "disabledPlatforms": [],
       "supportsExternalPlayer": true,
       "runtimeTimeoutMs": 20000,
-      "notes": "Final CineMode resolver. Does not guess internal CineMode routes. Loads the homepage, obtains the TMDB title, drives CineMode search UI, opens the matching title, interacts with Watch/Play/Skip/Close controls, and captures native WebView media requests. Requires VUEO Search Fix 5."
+      "notes": "Nuvio CineMode reliability rebuild: TV requests now drive Season/Episode UI controls before Watch/Play, TMDB original-title retry is used only when the primary search returns no media, direct HLS/MP4/M4V captures are preferred over /sora/ intermediates, captured player Referer/Cookie headers are preserved, TMDB title is used in stream metadata, and WebView/provider budgets are bounded."
     }
   ]
 }
