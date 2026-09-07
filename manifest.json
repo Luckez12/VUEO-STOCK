@@ -1,6 +1,6 @@
 {
   "name": "VUEO Stock",
-  "version": "1.10.1",
+  "version": "1.10.2",
   "scrapers": [
     {
       "id": "kisskh",
@@ -64,14 +64,28 @@
       "id": "hdhub4u",
       "name": "HDHub4u",
       "description": "Movie and TV stream provider",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "author": "Luckez",
       "supportedTypes": [
         "movie",
         "tv"
       ],
       "filename": "providers/hdhub4u.js",
-      "enabled": true
+      "enabled": true,
+      "formats": [
+        "m3u8",
+        "mp4",
+        "m4v",
+        "mkv"
+      ],
+      "contentLanguage": [
+        "hi",
+        "en"
+      ],
+      "disabledPlatforms": [],
+      "supportsExternalPlayer": true,
+      "runtimeTimeoutMs": 20000,
+      "notes": "Nuvio HDHub4u reliability rebuild: bounded request/provider timeouts, fixed redirector data decoding, current strong/Episode layout support, numeric episode matching, title + original-title search, HubDrive/HbLinks multi-source collection, generic/WebView extraction for HubStream/HDStream4u/unknown embeds, playback-header sanitisation, and valid Auto-quality streams are no longer discarded."
     },
     {
       "id": "moviebox",
