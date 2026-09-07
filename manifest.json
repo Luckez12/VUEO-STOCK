@@ -1,6 +1,6 @@
 {
   "name": "VUEO Stock",
-  "version": "1.9.8",
+  "version": "1.9.9",
   "scrapers": [
     {
       "id": "kisskh",
@@ -118,7 +118,7 @@
       "id": "pencurimovie",
       "name": "PencuriMovie",
       "description": "Malaysia and Indonesia movie and TV streams with multi-server playback",
-      "version": "1.2.2",
+      "version": "1.3.0",
       "author": "Luckez",
       "supportedTypes": [
         "movie",
@@ -139,7 +139,7 @@
       ],
       "disabledPlatforms": [],
       "supportsExternalPlayer": true,
-      "notes": "Native WebView playback headers are sanitised for Media3 playback while keeping Cookie and the exact player-mirror Referer. Direct media captures are preferred over intermediate /sora/ URLs.",
+      "notes": "Nuvio PencuriMovie now collects and merges streams/subtitles from every movieplay iframe instead of returning the first successful server. Standard extractors run with bounded concurrency across all frames; only the expensive native WebView fallback is capped to 3 unresolved frames. Duplicate sources are removed and each stream keeps its own Referer/headers and server label.",
       "runtimeTimeoutMs": 20000
     },
     {
