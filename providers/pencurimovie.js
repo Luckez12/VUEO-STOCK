@@ -1465,7 +1465,7 @@ function extractVoe(url, referer) {
   });
 }
 
-function extractGenericHost(url, referer, depth) {
+function extractGenericHost(url, referer, depth, allowWebView) {
   return requestRaw(url, {
     headers: referer ? { "Referer": referer } : {},
     redirect: "follow"
@@ -1481,60 +1481,141 @@ function extractGenericHost(url, referer, depth) {
     var nested = extractIframes(result.text, result.url || url).slice(0, 2);
     if (!nested.length) return resolved;
 
-    return Promise.all(nested.map(function(child) {
-      return loadExtractorEquivalent(child, result.url || url, Number(depth || 0) + 1)
-        .catch(function() { return emptyResolved(); });
-    })).then(function(children) {
-      children.forEach(function(child) { mergeResolved(resolved, child); });
+    return collectResolvedBounded(
+      nested.map(function(child) {
+        return function() {
+          return loadExtractorEquivalent(
+            child,
+            result.url || url,
+            Number(depth || 0) + 1,
+            allowWebView
+          ).catch(function() {
+            return emptyResolved();
+          });
+        };
+      }),
+      2,
+      1900
+    ).then(function(children) {
+      mergeResolved(
+        resolved,
+        children
+      );
       return resolved;
     });
   });
 }
 
 
-function firstNonEmptyResolved(tasks, timeoutMs) {
-  if (!Array.isArray(tasks) || !tasks.length) {
-    return Promise.resolve(emptyResolved());
+function collectValuesBounded(
+  factories,
+  concurrency,
+  timeoutMs
+) {
+  var jobs =
+    Array.isArray(factories)
+      ? factories
+      : [];
+
+  if (!jobs.length) {
+    return Promise.resolve([]);
   }
 
-  return new Promise(function(resolve) {
-    var pending = tasks.length;
-    var settled = false;
+  var limit =
+    Math.max(
+      1,
+      Number(concurrency || 1)
+    );
 
-    function finish(value) {
-      if (settled) return;
-      settled = true;
-      resolve(value || emptyResolved());
+  return new Promise(function(resolve) {
+    var output = [];
+    var next = 0;
+    var active = 0;
+    var done = false;
+
+    var timer =
+      setTimeout(
+        finish,
+        Math.max(
+          1,
+          Number(timeoutMs || 1)
+        )
+      );
+
+    function finish() {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      resolve(output);
     }
 
-    tasks.forEach(function(task) {
-      Promise.resolve(task)
-        .then(function(value) {
-          var count =
-            value && Array.isArray(value.streams)
-              ? value.streams.length
-              : 0;
+    function pump() {
+      if (done) return;
 
-          if (count > 0) {
-            finish(value);
-            return;
-          }
+      if (
+        next >= jobs.length &&
+        active === 0
+      ) {
+        finish();
+        return;
+      }
 
-          pending -= 1;
-          if (pending <= 0) finish(emptyResolved());
-        })
-        .catch(function() {
-          pending -= 1;
-          if (pending <= 0) finish(emptyResolved());
-        });
-    });
+      while (
+        !done &&
+        active < limit &&
+        next < jobs.length
+      ) {
+        var factory =
+          jobs[next++];
 
-    setTimeout(function() {
-      finish(emptyResolved());
-    }, timeoutMs);
+        active += 1;
+
+        Promise.resolve()
+          .then(factory)
+          .then(function(value) {
+            if (
+              !done &&
+              value !== undefined &&
+              value !== null
+            ) {
+              output.push(value);
+            }
+          })
+          .catch(function() {})
+          .then(function() {
+            active -= 1;
+            pump();
+          });
+      }
+    }
+
+    pump();
   });
 }
 
+function collectResolvedBounded(
+  factories,
+  concurrency,
+  timeoutMs
+) {
+  return collectValuesBounded(
+    factories,
+    concurrency,
+    timeoutMs
+  ).then(function(results) {
+    var merged =
+      emptyResolved();
+
+    results.forEach(function(result) {
+      mergeResolved(
+        merged,
+        result || emptyResolved()
+      );
+    });
+
+    return merged;
+  });
+}
 
 function nativeWebViewAvailable() {
   return (
@@ -1607,7 +1688,7 @@ function resolveWithNativeWebView(url, referer, label) {
 
   return globalThis.webviewResolve(absolute, {
     referer: referer || absolute,
-    timeoutMs: 13000,
+    timeoutMs: 6500,
     finishAfterFirstMs: 600,
     clickDelaysMs: [
       650,
@@ -1615,9 +1696,7 @@ function resolveWithNativeWebView(url, referer, label) {
       2200,
       3400,
       5000,
-      7000,
-      9500,
-      12000
+      6200
     ],
     match: [
       "/sora/",
@@ -1716,7 +1795,7 @@ function extractorNameFor(url) {
   return "Generic";
 }
 
-function dispatchExtractor(url, referer, depth) {
+function dispatchExtractor(url, referer, depth, allowWebView) {
   var name = extractorNameFor(url);
   console.log("[PencuriMovie] extractor=" + name + " host=" + hostOf(url));
 
@@ -1730,8 +1809,10 @@ function dispatchExtractor(url, referer, depth) {
   else if (name === "Vidmoly") work = extractVidmoly(url, referer);
   else if (name === "LuluStream") work = extractLulu(url, referer);
   else if (name === "Voe") work = extractVoe(url, referer);
-  else if (name === "BrowserPlayer") work = resolveWithNativeWebView(url, referer, "BrowserPlayer");
-  else work = extractGenericHost(url, referer, depth || 0);
+  else if (name === "BrowserPlayer") work = allowWebView === false
+    ? emptyResolved()
+    : resolveWithNativeWebView(url, referer, "BrowserPlayer");
+  else work = extractGenericHost(url, referer, depth || 0, allowWebView);
 
   return Promise.resolve(work).then(function(resolved) {
     var streams = resolved && Array.isArray(resolved.streams) ? resolved.streams.length : 0;
@@ -1743,7 +1824,7 @@ function dispatchExtractor(url, referer, depth) {
      */
     if (streams) return resolved || emptyResolved();
 
-    return extractGenericHost(url, referer, 1)
+    return extractGenericHost(url, referer, 1, allowWebView)
       .catch(function() {
         return resolved || emptyResolved();
       })
@@ -1755,6 +1836,10 @@ function dispatchExtractor(url, referer, depth) {
 
         if (genericStreams) return genericResolved;
 
+        if (allowWebView === false) {
+          return genericResolved || resolved || emptyResolved();
+        }
+
         return resolveWithNativeWebView(
           url,
           referer,
@@ -1764,7 +1849,7 @@ function dispatchExtractor(url, referer, depth) {
   });
 }
 
-function loadExtractorEquivalent(url, referer, depth) {
+function loadExtractorEquivalent(url, referer, depth, allowWebView) {
   var absolute = safeUrl(url, referer);
   if (!absolute) return Promise.resolve(emptyResolved());
 
@@ -1782,6 +1867,12 @@ function loadExtractorEquivalent(url, referer, depth) {
 
   var directName = extractorNameFor(absolute);
   if (directName === "BrowserPlayer") {
+    if (allowWebView === false) {
+      return Promise.resolve(
+        emptyResolved()
+      );
+    }
+
     console.log("[PencuriMovie] native direct host=" + hostOf(absolute));
     return resolveWithNativeWebView(
       absolute,
@@ -1796,54 +1887,258 @@ function loadExtractorEquivalent(url, referer, depth) {
       "[PencuriMovie] iframe=" + hostOf(absolute) +
       (finalUrl !== absolute ? " redirect=" + hostOf(finalUrl) : "")
     );
-    return dispatchExtractor(finalUrl, referer || absolute, depth || 0);
+    return dispatchExtractor(finalUrl, referer || absolute, depth || 0, allowWebView);
   });
 }
 
-function resolveMovieplayFrames(html, pageUrl) {
-  var direct = extractJwPlayerMedia(html, pageUrl);
+function resolveMovieplayFrames(
+  html,
+  pageUrl
+) {
+  var direct =
+    extractJwPlayerMedia(
+      html,
+      pageUrl
+    );
+
   var resolved = {
-    streams: direct.map(function(item) {
-      return {
-        url: item.url,
-        quality: item.quality,
-        referer: pageUrl,
-        headers: { "Referer": pageUrl }
-      };
-    }),
-    subtitles: extractSubtitles(html, pageUrl)
+    streams:
+      direct.map(function(item) {
+        return {
+          url: item.url,
+          quality: item.quality,
+          referer: pageUrl,
+          headers: {
+            "Referer": pageUrl
+          },
+          serverLabel:
+            "Page"
+        };
+      }),
+    subtitles:
+      extractSubtitles(
+        html,
+        pageUrl
+      )
   };
 
-  if (resolved.streams.length) return Promise.resolve(resolved);
+  var frames =
+    extractMovieplayIframes(
+      html,
+      pageUrl
+    );
 
-  var frames = extractMovieplayIframes(html, pageUrl);
+  var seen = {};
+  frames =
+    frames.filter(function(frame) {
+      var value =
+        String(frame || "").trim();
+
+      if (
+        !value ||
+        seen[value]
+      ) {
+        return false;
+      }
+
+      seen[value] = true;
+      return true;
+    });
+
   if (!frames.length) {
-    throw new Error("PencuriMovie movieplay iframe not found");
+    if (resolved.streams.length) {
+      return Promise.resolve(
+        resolved
+      );
+    }
+
+    throw new Error(
+      "PencuriMovie movieplay iframe not found"
+    );
   }
 
-  console.log("[PencuriMovie] movieplay iframes=" + frames.length);
+  console.log(
+    "[PencuriMovie] movieplay iframes=" +
+    frames.length
+  );
 
   /*
-   * Cloudstream calls loadExtractor for every iframe in div.movieplay.
-   * Run them in parallel so multiple servers do not multiply total latency.
+   * Every iframe is eligible. Standard HTTP extractors run first with bounded
+   * concurrency so one dead host cannot block the remaining servers.
    */
-  return firstNonEmptyResolved(
+  return collectValuesBounded(
     frames.map(function(frame) {
-      return loadExtractorEquivalent(frame, pageUrl, 0).catch(function(error) {
-        console.log(
-          "[PencuriMovie] extractor failed host=" + hostOf(frame) +
-          " error=" + (error && error.message ? error.message : String(error))
-        );
-        return emptyResolved();
-      });
+      return function() {
+        return loadExtractorEquivalent(
+          frame,
+          pageUrl,
+          0,
+          false
+        )
+          .catch(function(error) {
+            console.log(
+              "[PencuriMovie] standard extractor failed host=" +
+              hostOf(frame) +
+              " error=" +
+              (
+                error &&
+                error.message
+                  ? error.message
+                  : String(error)
+              )
+            );
+
+            return emptyResolved();
+          })
+          .then(function(child) {
+            (child.streams || [])
+              .forEach(function(stream) {
+                if (!stream.serverLabel) {
+                  stream.serverLabel =
+                    extractorNameFor(frame);
+                }
+              });
+
+            return {
+              frame: frame,
+              resolved: child
+            };
+          });
+      };
     }),
-    16000
-  ).then(function(child) {
-    mergeResolved(resolved, child);
-    return resolved;
+    3,
+    9200
+  ).then(function(results) {
+    var failedFrames = [];
+
+    results.forEach(function(entry) {
+      if (!entry) return;
+
+      var child =
+        entry.resolved ||
+        emptyResolved();
+
+      mergeResolved(
+        resolved,
+        child
+      );
+
+      if (
+        !child.streams ||
+        !child.streams.length
+      ) {
+        failedFrames.push(
+          entry.frame
+        );
+      }
+    });
+
+    /*
+     * Jobs that did not start before the standard-lane deadline also remain
+     * eligible for fallback.
+     */
+    var attempted = {};
+    results.forEach(function(entry) {
+      if (entry && entry.frame) {
+        attempted[entry.frame] = true;
+      }
+    });
+
+    frames.forEach(function(frame) {
+      if (!attempted[frame]) {
+        failedFrames.push(frame);
+      }
+    });
+
+    var fallbackSeen = {};
+    failedFrames =
+      failedFrames.filter(function(frame) {
+        if (
+          !frame ||
+          fallbackSeen[frame]
+        ) {
+          return false;
+        }
+
+        fallbackSeen[frame] = true;
+        return true;
+      });
+
+    console.log(
+      "[PencuriMovie] standard streams=" +
+      resolved.streams.length +
+      " fallback frames=" +
+      failedFrames.length
+    );
+
+    if (
+      !nativeWebViewAvailable() ||
+      !failedFrames.length
+    ) {
+      return resolved;
+    }
+
+    /*
+     * Native WebView is expensive. Only this fallback lane is capped.
+     * Prioritise browser-only hosts first, then unknown generic players.
+     */
+    failedFrames.sort(function(a, b) {
+      function score(url) {
+        var name =
+          extractorNameFor(url);
+
+        if (name === "BrowserPlayer") {
+          return 0;
+        }
+
+        if (name === "Generic") {
+          return 1;
+        }
+
+        return 2;
+      }
+
+      return score(a) - score(b);
+    });
+
+    var webViewFrames =
+      failedFrames.slice(0, 3);
+
+    return collectResolvedBounded(
+      webViewFrames.map(function(frame) {
+        return function() {
+          return loadExtractorEquivalent(
+            frame,
+            pageUrl,
+            0,
+            true
+          ).then(function(child) {
+            (child.streams || [])
+              .forEach(function(stream) {
+                if (!stream.serverLabel) {
+                  stream.serverLabel =
+                    extractorNameFor(frame);
+                }
+              });
+
+            return child;
+          }).catch(function() {
+            return emptyResolved();
+          });
+        };
+      }),
+      2,
+      6800
+    ).then(function(webResolved) {
+      mergeResolved(
+        resolved,
+        webResolved
+      );
+
+      return resolved;
+    });
   });
 }
-
 function resolvePlaybackPage(pageUrl) {
   return requestText(pageUrl, {}, 1800).then(function(result) {
     updateBaseFromUrl(result.url);
@@ -1871,7 +2166,13 @@ function buildStreams(resolved, info, mediaType, season, episode) {
     return {
       name:
         PROVIDER_NAME +
-        (sources.length > 1 ? " Server " + (index + 1) : ""),
+        (
+          source.serverLabel
+            ? " " + source.serverLabel
+            : sources.length > 1
+              ? " Server " + (index + 1)
+              : ""
+        ),
       title: (info.title || PROVIDER_NAME) + episodeLabel,
       url: source.url,
       quality: source.quality || inferQuality(source.url, ""),
