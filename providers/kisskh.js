@@ -292,6 +292,7 @@ function titleScore(candidate, expected) {
 
 
 /* VUEO_TITLE_PROFILE_V1 */
+/* VUEO_LIGHTWEIGHT_TMDB_V1 */
 function collectTmdbAliases(data, mediaType) {
   var output = [];
   var seen = {};
@@ -689,13 +690,12 @@ function getTmdbInfo(
     "/" +
     encodeURIComponent(tmdbId) +
     "?api_key=" +
-    TMDB_API_KEY +
-    "&append_to_response=alternative_titles,translations,external_ids";
+    TMDB_API_KEY ;
 
   return fetchJson(
     url,
     {},
-    1800,
+    3600,
     "KissKH TMDB"
   ).then(function(data) {
     return {

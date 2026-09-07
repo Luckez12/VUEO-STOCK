@@ -232,6 +232,7 @@ function titleScore(candidate, expected) {
 
 
 /* VUEO_TITLE_PROFILE_V1 */
+/* VUEO_LIGHTWEIGHT_TMDB_V1 */
 function collectTmdbAliases(data, mediaType) {
   var output = [];
   var seen = {};
@@ -423,9 +424,9 @@ function getTmdbInfo(tmdbId, mediaType) {
   var endpoint = mediaType === "movie" ? "movie" : "tv";
   var url =
     "https://api.themoviedb.org/3/" + endpoint + "/" + encodeURIComponent(tmdbId) +
-    "?api_key=" + TMDB_API_KEY + "&append_to_response=alternative_titles,translations,external_ids";
+    "?api_key=" + TMDB_API_KEY;
 
-  return requestJson(url, { "Accept": "application/json" }, 1500).then(function(data) {
+  return requestJson(url, { "Accept": "application/json" }, 3600).then(function(data) {
     return {
       tmdbId: String(tmdbId),
       title: String(data && (data.title || data.name) || ""),

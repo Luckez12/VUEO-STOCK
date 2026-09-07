@@ -499,6 +499,7 @@ function titleScore(candidate, expected) {
 
 
 /* VUEO_TITLE_PROFILE_V1 */
+/* VUEO_LIGHTWEIGHT_TMDB_V1 */
 function collectTmdbAliases(data, mediaType) {
   var output = [];
   var seen = {};
@@ -751,7 +752,7 @@ function scoreCandidate(item, info, mediaType, season) {
 function getTmdbInfo(tmdbId, mediaType) {
   var endpoint = mediaType === "movie" ? "movie" : "tv";
   var url = "https://api.themoviedb.org/3/" + endpoint + "/" + encodeURIComponent(tmdbId) +
-    "?api_key=" + TMDB_API_KEY + "&append_to_response=alternative_titles,translations,external_ids";
+    "?api_key=" + TMDB_API_KEY;
   return fetchJson(url, {}).then(function(data) {
     return {
       tmdbId: String(tmdbId),

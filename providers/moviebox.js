@@ -220,8 +220,7 @@ function getTmdbInfo(tmdbId, mediaType) {
     "/" +
     encodeURIComponent(tmdbId) +
     "?api_key=" +
-    TMDB_API_KEY +
-    "&append_to_response=alternative_titles,translations,external_ids";
+    TMDB_API_KEY ;
 
   return fetchJson(
     url,
@@ -230,7 +229,7 @@ function getTmdbInfo(tmdbId, mediaType) {
         "Accept": "application/json"
       }
     },
-    1300,
+    3600,
     "TMDB"
   ).then(function(data) {
     return {
@@ -341,6 +340,7 @@ function titleScore(candidate, expected) {
 
 
 /* VUEO_TITLE_PROFILE_V1 */
+/* VUEO_LIGHTWEIGHT_TMDB_V1 */
 function collectTmdbAliases(data, mediaType) {
   var output = [];
   var seen = {};

@@ -1,12 +1,12 @@
 {
   "name": "VUEO Stock",
-  "version": "1.11.1",
+  "version": "1.12.0",
   "scrapers": [
     {
       "id": "kisskh",
       "name": "KissKH",
       "description": "Asian drama, series and movie streams with subtitle metadata",
-      "version": "1.2.0",
+      "version": "1.2.1",
       "author": "Luckez",
       "supportedTypes": [
         "movie",
@@ -29,13 +29,13 @@
       ],
       "disabledPlatforms": [],
       "supportsExternalPlayer": true,
-      "notes": "Repo-wide TMDB alias matching V1: canonical/original/alternative/translated titles, with season-aware alias queries and alias-aware candidate scoring."
+      "notes": "V12 lightweight TMDB hotfix: provider startup now requests only core TMDB metadata (title, original title, year). Heavy alternative_titles/translations are no longer appended to the mandatory first request, preventing slow mobile TMDB responses from blocking all source extraction. Existing fuzzy/original-title matching and provider-specific fallbacks remain."
     },
     {
       "id": "onetouchtv",
       "name": "OneTouchTV",
       "description": "Asian drama, anime, series and movie streams with subtitle metadata",
-      "version": "1.2.0",
+      "version": "1.2.1",
       "author": "Luckez",
       "supportedTypes": [
         "movie",
@@ -58,13 +58,13 @@
       ],
       "disabledPlatforms": [],
       "supportsExternalPlayer": true,
-      "notes": "Repo-wide TMDB alias matching V1: alternative/translated TMDB aliases feed title search, detail scoring and season-aware queries."
+      "notes": "V12 lightweight TMDB hotfix: provider startup now requests only core TMDB metadata (title, original title, year). Heavy alternative_titles/translations are no longer appended to the mandatory first request, preventing slow mobile TMDB responses from blocking all source extraction. Existing fuzzy/original-title matching and provider-specific fallbacks remain."
     },
     {
       "id": "hdhub4u",
       "name": "HDHub4u",
       "description": "Movie and TV stream provider",
-      "version": "1.2.1",
+      "version": "1.2.2",
       "author": "Luckez",
       "supportedTypes": [
         "movie",
@@ -85,13 +85,13 @@
       "disabledPlatforms": [],
       "supportsExternalPlayer": true,
       "runtimeTimeoutMs": 20000,
-      "notes": "Hotfix: fixes recursive fetchWithTimeout wrapper that caused QuickJS stack overflow and could freeze VUEO. Keeps repo-wide TMDB alias matching and bounded extraction."
+      "notes": "V12 lightweight TMDB hotfix: provider startup now requests only core TMDB metadata (title, original title, year). Heavy alternative_titles/translations are no longer appended to the mandatory first request, preventing slow mobile TMDB responses from blocking all source extraction. Existing fuzzy/original-title matching and provider-specific fallbacks remain."
     },
     {
       "id": "moviebox",
       "name": "MovieBox",
       "description": "Movie and TV streams from the current MovieBox H5 web API mirror pool",
-      "version": "2.6.0",
+      "version": "2.6.1",
       "author": "Luckez",
       "supportedTypes": [
         "movie",
@@ -113,13 +113,13 @@
       "disabledPlatforms": [],
       "supportsExternalPlayer": true,
       "runtimeTimeoutMs": 20000,
-      "notes": "Repo-wide TMDB alias matching V1. MovieBox now scores canonical, original, alternative and translated TMDB titles. Alias H5 fallback is bounded to two mirrors, and WebView fallback is reduced to ~5.2s so an H5 title miss no longer consumes the full 20s provider budget."
+      "notes": "V12 lightweight TMDB hotfix: provider startup now requests only core TMDB metadata (title, original title, year). Heavy alternative_titles/translations are no longer appended to the mandatory first request, preventing slow mobile TMDB responses from blocking all source extraction. Existing fuzzy/original-title matching and provider-specific fallbacks remain."
     },
     {
       "id": "4khdhub",
       "name": "4KHDHub",
       "description": "Movie and TV stream provider",
-      "version": "1.2.0",
+      "version": "1.2.1",
       "author": "Luckez",
       "supportedTypes": [
         "movie",
@@ -140,13 +140,13 @@
       "disabledPlatforms": [],
       "supportsExternalPlayer": true,
       "runtimeTimeoutMs": 20000,
-      "notes": "Repo-wide TMDB alias matching V1: canonical/original/alternative/translated titles are searched and scored with year/media-type checks."
+      "notes": "V12 lightweight TMDB hotfix: provider startup now requests only core TMDB metadata (title, original title, year). Heavy alternative_titles/translations are no longer appended to the mandatory first request, preventing slow mobile TMDB responses from blocking all source extraction. Existing fuzzy/original-title matching and provider-specific fallbacks remain."
     },
     {
       "id": "pencurimovie",
       "name": "PencuriMovie",
       "description": "Malaysia and Indonesia movie and TV streams with multi-server playback",
-      "version": "1.4.0",
+      "version": "1.4.1",
       "author": "Luckez",
       "supportedTypes": [
         "movie",
@@ -167,14 +167,14 @@
       ],
       "disabledPlatforms": [],
       "supportsExternalPlayer": true,
-      "notes": "Repo-wide TMDB alias matching V1: aliases are used for direct slugs, site search and candidate scoring; searches stop once a strong match is found.",
+      "notes": "V12 lightweight TMDB hotfix: provider startup now requests only core TMDB metadata (title, original title, year). Heavy alternative_titles/translations are no longer appended to the mandatory first request, preventing slow mobile TMDB responses from blocking all source extraction. Existing fuzzy/original-title matching and provider-specific fallbacks remain.",
       "runtimeTimeoutMs": 20000
     },
     {
       "id": "msm21",
       "name": "MSM21",
       "description": "Malay subtitle movie and TV streams using Zeta player multi-server extraction",
-      "version": "1.3.0",
+      "version": "1.3.1",
       "author": "Luckez",
       "supportedTypes": [
         "movie",
@@ -195,14 +195,14 @@
       ],
       "disabledPlatforms": [],
       "supportsExternalPlayer": true,
-      "notes": "Repo-wide TMDB alias matching V1: aliases are used for direct permalinks, WordPress search and candidate scoring; searches stop once a strong match is found.",
+      "notes": "V12 lightweight TMDB hotfix: provider startup now requests only core TMDB metadata (title, original title, year). Heavy alternative_titles/translations are no longer appended to the mandatory first request, preventing slow mobile TMDB responses from blocking all source extraction. Existing fuzzy/original-title matching and provider-specific fallbacks remain.",
       "runtimeTimeoutMs": 20000
     },
     {
       "id": "cinemode",
       "name": "CineMode",
       "description": "Movie and TV stream resolver for the CineMode streaming PWA",
-      "version": "1.2.0",
+      "version": "1.2.1",
       "author": "Luckez",
       "supportedTypes": [
         "movie",
@@ -223,7 +223,7 @@
       "disabledPlatforms": [],
       "supportsExternalPlayer": true,
       "runtimeTimeoutMs": 20000,
-      "notes": "Repo-wide TMDB alias matching V1: primary TMDB title plus one highest-priority alternate title fallback, preserving the bounded WebView runtime."
+      "notes": "V12 lightweight TMDB hotfix: provider startup now requests only core TMDB metadata (title, original title, year). Heavy alternative_titles/translations are no longer appended to the mandatory first request, preventing slow mobile TMDB responses from blocking all source extraction. Existing fuzzy/original-title matching and provider-specific fallbacks remain."
     }
   ]
 }

@@ -108,12 +108,11 @@ function getTmdbInfo(
     "/" +
     encodeURIComponent(tmdbId) +
     "?api_key=" +
-    TMDB_API_KEY +
-    "&append_to_response=alternative_titles,translations,external_ids";
+    TMDB_API_KEY ;
 
   return fetchJson(
     url,
-    1600
+    3600
   ).then(function(data) {
     return {
       title:
@@ -164,6 +163,7 @@ function normalizeTitle(value) {
 
 
 /* VUEO_TITLE_PROFILE_V1 */
+/* VUEO_LIGHTWEIGHT_TMDB_V1 */
 function collectTmdbAliasesCine(data) {
   var output = [];
   var seen = {};

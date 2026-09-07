@@ -275,6 +275,7 @@ function calculateSimilarity(str1, str2) {
 
 
 /* VUEO_TITLE_PROFILE_V1 */
+/* VUEO_LIGHTWEIGHT_TMDB_V1 */
 function collectTmdbAliases4K(data) {
   var output = [];
   var seen = {};
@@ -1449,8 +1450,7 @@ function getTMDBDetails(tmdbId, mediaType) {
     '/' +
     tmdbId +
     '?api_key=' +
-    TMDB_API_KEY +
-    '&append_to_response=alternative_titles,translations,external_ids';
+    TMDB_API_KEY ;
 
   return makeRequest(url)
     .then(function(res) {

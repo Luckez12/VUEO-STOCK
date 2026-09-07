@@ -76,6 +76,14 @@ for (const scraper of manifest.scrapers) {
     fail(`${scraper.filename} is missing the repo-wide TMDB title profile marker`);
   }
 
+  if (source.includes('append_to_response=alternative_titles,translations')) {
+    fail(`${scraper.filename} must not use heavy TMDB append_to_response in the mandatory path`);
+  }
+
+  if (!source.includes('VUEO_LIGHTWEIGHT_TMDB_V1')) {
+    fail(`${scraper.filename} is missing lightweight TMDB marker`);
+  }
+
   if (
     scraper.id === 'hdhub4u' &&
     /function\s+fetchWithTimeout\s*\([^)]*\)\s*\{[\s\S]*?fetchWithTimeout\s*\(\s*url\s*,\s*options\s*\|\|\s*\{\}\s*\)/.test(source)

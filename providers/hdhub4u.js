@@ -1451,7 +1451,7 @@ function getDownloadLinks(mediaUrl) {
  */
 function getTMDBDetails(tmdbId, mediaType) {
     const endpoint = mediaType === 'tv' ? 'tv' : 'movie';
-    const url = `${TMDB_BASE_URL}/${endpoint}/${tmdbId}?api_key=${TMDB_API_KEY}&append_to_response=alternative_titles,translations,external_ids`;
+    const url = `${TMDB_BASE_URL}/${endpoint}/${tmdbId}?api_key=${TMDB_API_KEY}`;
 
     return fetchWithTimeout(url, {
         method: 'GET',
@@ -1509,6 +1509,7 @@ function normalizeTitle(title) {
 
 
 /* VUEO_TITLE_PROFILE_V1 */
+/* VUEO_LIGHTWEIGHT_TMDB_V1 */
 /* HDHUB4U_FETCH_RECURSION_HOTFIX_V1 */
 function collectTmdbAliasesHD(data) {
     const output = [];
