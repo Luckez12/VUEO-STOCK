@@ -1,9 +1,77 @@
 "use strict";
 
-var PROVIDER_NAME = "MSM21";
+/* VUEO_SHARED_DISCOVERY_CONTEXT_V1 */
 /* VUEO_PROVIDER_REPAIR_V16 */
+/* VUEO_PROVIDER_REPAIR_V17 */
+function vueoTrace(stage, details) {
+  try {
+    if (typeof globalThis !== "undefined" && typeof globalThis.vueoTrace === "function") {
+      globalThis.vueoTrace(stage, details || {});
+    }
+  } catch (_) {}
+}
+
+function vueoContextFromRaw(raw) {
+  if (!raw) return null;
+  if (typeof raw === "string") {
+    try { return JSON.parse(raw); } catch (_) { return null; }
+  }
+  return typeof raw === "object" ? raw : null;
+}
+
+function vueoSharedTmdb(url, fallback) {
+  function normalize(context) {
+    var ctx = vueoContextFromRaw(context);
+    if (!ctx || ctx.error) return null;
+    var tmdb = ctx.tmdb && typeof ctx.tmdb === "object" ? ctx.tmdb : null;
+    if (!tmdb) {
+      tmdb = {
+        id: ctx.tmdbId,
+        title: ctx.mediaType === "movie" ? ctx.title : undefined,
+        name: ctx.mediaType === "tv" ? ctx.title : undefined,
+        original_title: ctx.mediaType === "movie" ? (ctx.originalTitle || ctx.title) : undefined,
+        original_name: ctx.mediaType === "tv" ? (ctx.originalTitle || ctx.title) : undefined,
+        release_date: ctx.mediaType === "movie" && ctx.year ? String(ctx.year) + "-01-01" : "",
+        first_air_date: ctx.mediaType === "tv" && ctx.year ? String(ctx.year) + "-01-01" : "",
+        external_ids: { imdb_id: ctx.imdbId || "" }
+      };
+    }
+    vueoTrace("METADATA", {
+      shared: true,
+      title: ctx.title || tmdb.title || tmdb.name || "",
+      year: ctx.year || "",
+      imdbId: ctx.imdbId || "",
+      aliases: ctx.aliases && ctx.aliases.length ? ctx.aliases.length : 0
+    });
+    return tmdb;
+  }
+
+  try {
+    if (typeof globalThis !== "undefined") {
+      var direct = normalize(globalThis.VUEO_DISCOVERY_CONTEXT);
+      if (direct) return Promise.resolve(direct);
+      if (typeof globalThis.vueoDiscoveryContext === "function") {
+        return Promise.resolve(globalThis.vueoDiscoveryContext(url))
+          .then(function(raw) {
+            var shared = normalize(raw);
+            if (shared) return shared;
+            throw new Error("shared context unavailable");
+          })
+          .catch(function() {
+            vueoTrace("METADATA_FALLBACK", { shared: false });
+            return fallback();
+          });
+      }
+    }
+  } catch (_) {}
+
+  vueoTrace("METADATA_FALLBACK", { shared: false });
+  return fallback();
+}
+
+
+var PROVIDER_NAME = "MSM21";
 var BASE_URL = "https://pencurimoviesubmalay26.site";
-var DNS_DEAD_HOSTS = Object.create(null);
 var TMDB_API_KEY = "1c29a5198ee1854bd5eb45dbe8d17d92";
 var USER_AGENT =
   "Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 " +
@@ -15,54 +83,10 @@ var DEFAULT_HEADERS = {
   "Accept-Language": "ms-MY,ms;q=0.9,en-US;q=0.8,en;q=0.7"
 };
 
+var DNS_DEAD_HOSTS = Object.create(null);
 var currentBaseUrl = BASE_URL.replace(/\/+$/, "");
 var MIRROR_CACHE = Object.create(null);
 var MIRROR_CACHE_TTL_MS = 90000;
-
-/* VUEO_SHARED_DISCOVERY_CONTEXT_V1 */
-function vueoSharedTmdb(url, fallback) {
-  if (
-    typeof globalThis !== "undefined" &&
-    typeof globalThis.vueoDiscoveryContext === "function"
-  ) {
-    return globalThis.vueoDiscoveryContext(url)
-      .then(function(context) {
-        if (context && context.tmdb) {
-          if (typeof globalThis.vueoTrace === "function") {
-            globalThis.vueoTrace("METADATA", {
-              shared: true,
-              title: context.title || "",
-              year: context.year || "",
-              imdbId: context.imdbId || "",
-              aliases: Array.isArray(context.aliases) ? context.aliases.length : 0
-            });
-          }
-          return context.tmdb;
-        }
-        throw new Error("Shared discovery context is empty");
-      })
-      .catch(function(error) {
-        if (typeof globalThis.vueoTrace === "function") {
-          globalThis.vueoTrace("METADATA_FALLBACK", {
-            reason: error && error.message ? error.message : String(error)
-          });
-        }
-        return fallback();
-      });
-  }
-  return fallback();
-}
-
-function vueoCandidateTrace(stage, details) {
-  try {
-    if (
-      typeof globalThis !== "undefined" &&
-      typeof globalThis.vueoTrace === "function"
-    ) {
-      globalThis.vueoTrace(stage, details || {});
-    }
-  } catch (_) {}
-}
 
 function withSoftTimeout(promise, timeoutMs, label) {
   return new Promise(function(resolve, reject) {
@@ -277,246 +301,6 @@ function titleScore(candidate, expected) {
   return Math.round((recall * 0.72 + precision * 0.28) * 72);
 }
 
-
-/* VUEO_TITLE_PROFILE_V1 */
-function collectTmdbAliases(data, mediaType) {
-  var output = [];
-  var seen = {};
-
-  function add(value, priority) {
-    var text = String(value || "").trim();
-    var key = normalizeTitle(text);
-    if (!text || !key || seen[key]) return;
-
-    seen[key] = true;
-    output.push({
-      title: text,
-      priority: Number(priority || 0)
-    });
-  }
-
-  add(data && (data.title || data.name), 100);
-  add(
-    data &&
-    (
-      data.original_title ||
-      data.original_name
-    ),
-    95
-  );
-
-  var altRoot =
-    data &&
-    data.alternative_titles;
-
-  var altItems =
-    altRoot &&
-    (
-      Array.isArray(altRoot.titles)
-        ? altRoot.titles
-        : Array.isArray(altRoot.results)
-          ? altRoot.results
-          : []
-    );
-
-  altItems.forEach(function(item) {
-    if (!item) return;
-
-    var country =
-      String(
-        item.iso_3166_1 || ""
-      ).toUpperCase();
-
-    var boost =
-      country === "US" ||
-      country === "GB"
-        ? 86
-        : country === "MY" ||
-          country === "ID"
-          ? 82
-          : 72;
-
-    add(
-      item.title ||
-      item.name,
-      boost
-    );
-  });
-
-  var translations =
-    data &&
-    data.translations &&
-    Array.isArray(
-      data.translations.translations
-    )
-      ? data.translations.translations
-      : [];
-
-  translations.forEach(function(item) {
-    var row =
-      item &&
-      item.data &&
-      typeof item.data === "object"
-        ? item.data
-        : {};
-
-    var lang =
-      String(
-        item &&
-        item.iso_639_1 ||
-        ""
-      ).toLowerCase();
-
-    var boost =
-      lang === "en"
-        ? 88
-        : lang === "ms" ||
-          lang === "id"
-          ? 80
-          : 68;
-
-    add(
-      row.title ||
-      row.name,
-      boost
-    );
-  });
-
-  output.sort(function(a, b) {
-    return b.priority - a.priority;
-  });
-
-  return output
-    .map(function(item) {
-      return item.title;
-    })
-    .slice(0, 12);
-}
-
-function bestAliasTitleScore(candidate, info) {
-  var aliases =
-    info &&
-    Array.isArray(info.aliases) &&
-    info.aliases.length
-      ? info.aliases
-      : [
-          info && info.title,
-          info && info.originalTitle
-        ];
-
-  var best = 0;
-
-  aliases.forEach(function(alias) {
-    best = Math.max(
-      best,
-      titleScore(
-        candidate,
-        alias
-      )
-    );
-  });
-
-  return best;
-}
-
-
-/* VUEO_DISCOVERY_REBUILD_V1 */
-function cleanDiscoveryTitleMSM(value) {
-  return normalizeTitle(
-    String(value || "")
-      .replace(/\[(?:[^\]]{0,120})\]/g, " ")
-      .replace(/\b(?:19|20)\d{2}\b/g, " ")
-      .replace(/\bs\d{1,2}(?:\s*[-–]\s*s\d{1,2})?\b/gi, " ")
-      .replace(/\b(?:ep|episode|e)\s*[-#:]?\s*\d{1,3}\b/gi, " ")
-      .replace(/\b(?:2160p|1080p|720p|480p|4k|web[- ]?dl|bluray|hevc|h26[45]|10bit|malaysub|malaydub|series|movies?)\b/gi, " ")
-  );
-}
-
-function bestDiscoveryTitleScoreMSM(candidate, info) {
-  var aliases =
-    info &&
-    Array.isArray(info.aliases) &&
-    info.aliases.length
-      ? info.aliases
-      : [
-          info && info.title,
-          info && info.originalTitle
-        ];
-
-  var cleanCandidate =
-    cleanDiscoveryTitleMSM(candidate);
-
-  var best = 0;
-
-  aliases.forEach(function(alias) {
-    var cleanAlias =
-      cleanDiscoveryTitleMSM(alias);
-
-    if (!cleanCandidate || !cleanAlias) return;
-
-    if (cleanCandidate === cleanAlias) {
-      best = Math.max(best, 100);
-    } else if (
-      cleanCandidate.indexOf(cleanAlias) !== -1 ||
-      cleanAlias.indexOf(cleanCandidate) !== -1
-    ) {
-      best = Math.max(best, 90);
-    } else {
-      best = Math.max(
-        best,
-        titleScore(
-          cleanCandidate,
-          cleanAlias
-        )
-      );
-    }
-  });
-
-  return best;
-}
-
-function buildAliasQueries(info, limit) {
-  var output = [];
-  var seen = {};
-
-  var aliases =
-    info &&
-    Array.isArray(info.aliases)
-      ? info.aliases
-      : [
-          info && info.title,
-          info && info.originalTitle
-        ];
-
-  aliases.forEach(function(alias) {
-    var text =
-      String(alias || "")
-        .trim();
-
-    var key =
-      normalizeTitle(text);
-
-    if (
-      !text ||
-      !key ||
-      seen[key]
-    ) {
-      return;
-    }
-
-    seen[key] = true;
-    output.push(text);
-  });
-
-  return output.slice(
-    0,
-    Math.max(
-      1,
-      Number(limit || 4)
-    )
-  );
-}
-
 function yearFrom(value) {
   var match = String(value || "").match(/\b(19|20)\d{2}\b/);
   return match ? match[0] : "";
@@ -524,22 +308,15 @@ function yearFrom(value) {
 
 function getTmdbInfo(tmdbId, mediaType) {
   var endpoint = mediaType === "movie" ? "movie" : "tv";
-  var url =
-    "https://api.themoviedb.org/3/" + endpoint + "/" + encodeURIComponent(tmdbId) +
-    "?api_key=" + TMDB_API_KEY + "&append_to_response=alternative_titles,translations,external_ids";
-
-  return vueoSharedTmdb(
-    url,
-    function() {
-      return requestJson(url, { "Accept": "application/json" }, 1500);
-    }
-  ).then(function(data) {
+  var url = "https://api.themoviedb.org/3/" + endpoint + "/" + encodeURIComponent(tmdbId) + "?api_key=" + TMDB_API_KEY;
+  return vueoSharedTmdb(url, function() {
+    return requestJson(url, { "Accept": "application/json" }, 1400);
+  }).then(function(data) {
     return {
       tmdbId: String(tmdbId),
       title: String(data && (data.title || data.name) || ""),
       originalTitle: String(data && (data.original_title || data.original_name) || ""),
-      year: String(data && (data.release_date || data.first_air_date) || "").split("-")[0],
-      aliases: collectTmdbAliases(data, mediaType)
+      year: String(data && (data.release_date || data.first_air_date) || "").split("-")[0]
     };
   });
 }
@@ -568,236 +345,61 @@ function rewriteToCurrentDomain(url) {
 }
 
 function parseSearchResults(html, pageUrl) {
+  var blocks = extractBalancedBlocksByClass(html, "div", "display-item");
   var results = [];
   var seen = Object.create(null);
-  var rank = 0;
 
-  function addBlock(block) {
-    var source =
-      String(block || "");
-
-    var anchorMatch =
-      source.match(
-        /<a\b[^>]*href\s*=\s*(["'])[\s\S]*?\1[^>]*>/i
-      );
-
+  blocks.forEach(function(block, rank) {
+    var anchorMatch = block.match(/<a\b[^>]*href\s*=\s*(["'])[\s\S]*?\1[^>]*>/i);
     if (!anchorMatch) return;
 
-    var anchor =
-      anchorMatch[0];
+    var anchor = anchorMatch[0];
+    var href = rewriteToCurrentDomain(safeUrl(getAttr(anchor, "href"), pageUrl));
+    if (!href || seen[href]) return;
 
-    var href =
-      rewriteToCurrentDomain(
-        safeUrl(
-          getAttr(anchor, "href"),
-          pageUrl
-        )
-      );
-
-    if (
-      !href ||
-      seen[href]
-    ) {
-      return;
-    }
-
-    if (
-      !/\/(?:movies|tvshows)\//i.test(href)
-    ) {
-      return;
-    }
-
-    var rawTitle =
-      stripTags(
-        getAttr(anchor, "oldtitle") ||
-        getAttr(anchor, "title")
-      );
-
+    var rawTitle = stripTags(getAttr(anchor, "title"));
     if (!rawTitle) {
-      var heading =
-        source.match(
-          /<(?:h2|h3)\b[^>]*>([\s\S]*?)<\/(?:h2|h3)>/i
-        );
-
-      rawTitle =
-        heading
-          ? stripTags(heading[1])
-          : "";
+      var h3 = block.match(/<h3\b[^>]*>([\s\S]*?)<\/h3>/i);
+      rawTitle = h3 ? stripTags(h3[1]) : "";
     }
-
-    if (!rawTitle) {
-      var image =
-        source.match(
-          /<img\b[^>]*alt\s*=\s*(["'])([\s\S]*?)\1[^>]*>/i
-        );
-
-      rawTitle =
-        image
-          ? stripTags(image[2])
-          : "";
-    }
-
     if (!rawTitle) return;
 
-    var year =
-      yearFrom(rawTitle) ||
-      yearFrom(source);
+    var year = "";
+    var yearMatch = rawTitle.match(/\s*\(((?:19|20)\d{2})\)\s*$/);
+    if (yearMatch) year = yearMatch[1];
 
-    var title =
-      rawTitle
-        .replace(/\s*\(((?:19|20)\d{2})\)\s*$/, "")
-        .trim() ||
-      rawTitle;
-
-    var ptype =
-      String(
-        getAttr(anchor, "data-ptype") ||
-        ""
-      ).toLowerCase();
-
-    var isSeries =
-      ptype.indexOf("tv") !== -1 ||
-      /\/tvshows\//i.test(href) ||
-      /\bmli-eps\b/i.test(source);
+    var title = rawTitle.replace(/\s*\(((?:19|20)\d{2})\)\s*$/, "").trim() || rawTitle;
+    var ptype = String(getAttr(anchor, "data-ptype") || "").toLowerCase();
+    var isSeries = ptype.indexOf("tv") !== -1 || /\/tvshows\//i.test(href);
 
     seen[href] = true;
-
     results.push({
       title: title,
       year: year,
       href: href,
       isSeries: isSeries,
-      rank: rank++
+      rank: rank
     });
-  }
-
-  /*
-   * Legacy layout.
-   */
-  extractBalancedBlocksByClass(
-    html,
-    "div",
-    "display-item"
-  ).forEach(addBlock);
-
-  /*
-   * Current movisubmalay/Pencuri style cards.
-   */
-  extractBalancedBlocksByClass(
-    html,
-    "div",
-    "ml-item"
-  ).forEach(addBlock);
-
-  /*
-   * Generic fallback: the current archive pages expose canonical /movies/
-   * and /tvshows/ anchors even if CSS class names change.
-   */
-  var anchorRegex =
-    /<a\b[^>]*href\s*=\s*(["'])[\s\S]*?\1[^>]*>([\s\S]*?)<\/a>/gi;
-
-  var match;
-
-  while (
-    (match = anchorRegex.exec(String(html || "")))
-  ) {
-    var tag =
-      match[0];
-
-    var href =
-      rewriteToCurrentDomain(
-        safeUrl(
-          getAttr(tag, "href"),
-          pageUrl
-        )
-      );
-
-    if (
-      !href ||
-      seen[href] ||
-      !/\/(?:movies|tvshows)\//i.test(href)
-    ) {
-      continue;
-    }
-
-    var title =
-      stripTags(
-        getAttr(tag, "oldtitle") ||
-        getAttr(tag, "title") ||
-        match[2]
-      );
-
-    if (!title) continue;
-
-    seen[href] = true;
-
-    results.push({
-      title: title.replace(/\s*\(((?:19|20)\d{2})\)\s*$/, "").trim(),
-      year: yearFrom(title),
-      href: href,
-      isSeries: /\/tvshows\//i.test(href),
-      rank: rank++
-    });
-  }
+  });
 
   return results;
 }
 
 function scoreCandidate(item, info, mediaType) {
-  var score =
-    bestDiscoveryTitleScoreMSM(
-      item.title,
-      info
-    );
+  var score = Math.max(
+    titleScore(item.title, info.title),
+    titleScore(item.title, info.originalTitle)
+  );
 
-  if (
-    item.year &&
-    info.year &&
-    item.year === info.year
-  ) {
-    score += 18;
-  }
-
-  if (
-    mediaType === "tv" &&
-    item.isSeries
-  ) {
-    score += 24;
-  }
-
-  if (
-    mediaType === "movie" &&
-    !item.isSeries
-  ) {
-    score += 18;
-  }
-
-  if (
-    mediaType === "tv" &&
-    !item.isSeries
-  ) {
-    score -= 40;
-  }
-
-  if (
-    mediaType === "movie" &&
-    item.isSeries
-  ) {
-    score -= 40;
-  }
-
-  score +=
-    Math.max(
-      0,
-      10 -
-      Number(
-        item.rank ||
-        0
-      )
-    );
-
+  if (item.year && info.year && item.year === info.year) score += 30;
+  if (mediaType === "tv" && item.isSeries) score += 24;
+  if (mediaType === "movie" && !item.isSeries) score += 18;
+  if (mediaType === "tv" && !item.isSeries) score -= 25;
+  if (mediaType === "movie" && item.isSeries) score -= 25;
+  score += Math.max(0, 12 - Number(item.rank || 0));
   return score;
 }
+
 
 function slugifyTitle(value) {
   var text = String(value || "");
@@ -891,16 +493,29 @@ function isDirectPageMatch(result, info, mediaType) {
     pathSlug = path.length ? path[path.length - 1] : "";
   } catch (_) {}
 
-  if (expectedSlug && pathSlug.indexOf(expectedSlug) === 0) return true;
+  if (expectedSlug && pathSlug.indexOf(expectedSlug) === 0) {
+    if (info.year && pathSlug.indexOf(String(info.year)) !== -1) {
+      vueoTrace("DIRECT_MATCH", { url: url, reason: "slug-year" });
+      return true;
+    }
+    var quickIdentity = extractDetailIdentity(body);
+    var quickScore = Math.max(
+      titleScore(quickIdentity.title, info.title),
+      titleScore(quickIdentity.title, info.originalTitle)
+    );
+    if (quickScore >= 52) {
+      vueoTrace("DIRECT_MATCH", { url: url, reason: "slug-title", score: quickScore });
+      return true;
+    }
+  }
 
   var identity = extractDetailIdentity(body);
   if (!identity.title) return false;
 
-  var score =
-    bestAliasTitleScore(
-      identity.title,
-      info
-    );
+  var score = Math.max(
+    titleScore(identity.title, info.title),
+    titleScore(identity.title, info.originalTitle)
+  );
 
   if (score < 52) return false;
   if (info.year && identity.year && String(info.year) !== String(identity.year)) return false;
@@ -909,11 +524,13 @@ function isDirectPageMatch(result, info, mediaType) {
 }
 
 function buildDirectCandidates(info, mediaType) {
-  var titles =
-    buildAliasQueries(
-      info,
-      8
-    );
+  var titles = [info.title];
+  if (
+    info.originalTitle &&
+    normalizeTitle(info.originalTitle) !== normalizeTitle(info.title)
+  ) {
+    titles.push(info.originalTitle);
+  }
 
   var output = [];
   var seen = Object.create(null);
@@ -948,46 +565,37 @@ function tryDirectTitlePage(info, mediaType) {
   var candidates = buildDirectCandidates(info, mediaType);
   if (!candidates.length) return Promise.resolve(null);
 
-  /* VUEO_FAST_DISCOVERY_V1
-   * Try every permalink candidate, but do it in a small bounded pool instead
-   * of serially spending ~700ms on each miss. The original candidate order is
-   * preserved when choosing a valid hit, so coverage and preference stay the
-   * same while no-result discovery becomes much faster.
-   */
-  return collectValuesBounded(
-    candidates.map(function(url, index) {
-      return function() {
-        var timeoutMs = index === 0 ? 1400 : 700;
-        return requestText(
-          url,
-          { "Referer": trimSlash(currentBaseUrl) + "/" },
-          timeoutMs
-        ).then(function(result) {
-          updateBaseFromUrl(result.url || url);
-          if (!isDirectPageMatch(result, info, mediaType)) return null;
-          return {
-            index: index,
-            match: {
-              href: result.url || url,
-              title: info.title,
-              year: info.year,
-              isSeries: mediaType === "tv",
-              __detailHtml: result.text
-            }
-          };
-        }).catch(function() { return null; });
+  function tryIndex(index) {
+    if (index >= candidates.length) return Promise.resolve(null);
+
+    var url = candidates[index];
+    var timeoutMs = index === 0 ? 1400 : 700;
+
+    return requestText(
+      url,
+      { "Referer": trimSlash(currentBaseUrl) + "/" },
+      timeoutMs
+    ).then(function(result) {
+      updateBaseFromUrl(result.url || url);
+
+      if (!isDirectPageMatch(result, info, mediaType)) {
+        return tryIndex(index + 1);
+      }
+
+      console.log("[MSM21] direct permalink hit " + (result.url || url));
+      return {
+        href: result.url || url,
+        title: info.title,
+        year: info.year,
+        isSeries: mediaType === "tv",
+        __detailHtml: result.text
       };
-    }),
-    3,
-    3200
-  ).then(function(matches) {
-    matches = matches.filter(Boolean).sort(function(a, b) {
-      return a.index - b.index;
+    }).catch(function() {
+      return tryIndex(index + 1);
     });
-    if (!matches.length) return null;
-    console.log("[MSM21] direct permalink hit " + matches[0].match.href);
-    return matches[0].match;
-  });
+  }
+
+  return tryIndex(0);
 }
 
 function searchSite(query) {
@@ -999,183 +607,44 @@ function searchSite(query) {
     });
 }
 
-
-function browseArchiveMSM(mediaType) {
-  var path =
-    mediaType === "tv"
-      ? "/tvshows/"
-      : "/movies/";
-
-  var url =
-    trimSlash(currentBaseUrl) +
-    path;
-
-  return requestText(
-    url,
-    {
-      "Referer":
-        trimSlash(currentBaseUrl) +
-        "/"
-    },
-    3200
-  )
-    .then(function(result) {
-      updateBaseFromUrl(
-        result.url ||
-        url
-      );
-
-      return parseSearchResults(
-        result.text,
-        result.url ||
-        url
-      );
-    })
-    .catch(function() {
-      return [];
-    });
-}
-
 function findBestTitle(info, mediaType) {
-  return tryDirectTitlePage(
-    info,
-    mediaType
-  ).then(function(direct) {
+  return tryDirectTitlePage(info, mediaType).then(function(direct) {
     if (direct) return direct;
 
-    console.log(
-      "[MSM21] direct permalink miss, using discovery search"
-    );
+    console.log("[MSM21] direct permalink miss, using WordPress search");
 
-    var queries =
-      buildAliasQueries(
-        info,
-        8
-      );
-
-    return collectValuesBounded(
-      queries.map(function(query) {
-        return function() {
-          return searchSite(query)
-            .catch(function() {
-              return [];
-            });
-        };
-      }),
-      3,
-      7000
-    ).then(function(groups) {
-      var seen =
-        Object.create(null);
-
-      var candidates = [];
-
-      groups.forEach(function(items) {
-        (
-          Array.isArray(items)
-            ? items
-            : []
-        ).forEach(function(item) {
-          if (
-            !item ||
-            !item.href ||
-            seen[item.href]
-          ) {
-            return;
-          }
-
-          seen[item.href] = true;
-          candidates.push(item);
-        });
+    return searchSite(info.title).then(function(items) {
+      items.sort(function(a, b) {
+        return scoreCandidate(b, info, mediaType) - scoreCandidate(a, info, mediaType);
       });
 
-      function choose(items) {
-        var list =
-          Array.isArray(items)
-            ? items.slice()
-            : [];
-
-        list.sort(function(a, b) {
-          return (
-            scoreCandidate(
-              b,
-              info,
-              mediaType
-            ) -
-            scoreCandidate(
-              a,
-              info,
-              mediaType
-            )
-          );
-        });
-
-        if (!list.length) {
-          return null;
-        }
-
-        var topScore =
-          scoreCandidate(
-            list[0],
-            info,
-            mediaType
-          );
-
-        vueoCandidateTrace("CANDIDATE", {
-          count: list.length,
-          title: list[0] ? list[0].title : "",
-          score: topScore
-        });
-
-        return topScore >= 44
-          ? list[0]
-          : null;
-      }
-
-      var best =
-        choose(candidates);
-
-      if (best) {
-        console.log(
-          "[MSM21] discovery search hit " +
-          best.href
-        );
-        return best;
-      }
+      var best = items[0];
+      if (best && scoreCandidate(best, info, mediaType) >= 45) return best;
 
       /*
-       * Search endpoints on this site have changed markup several times.
-       * The archive page is a reliable fallback and currently exposes the
-       * canonical /tvshows/ and /movies/ cards directly.
+       * Only perform a second search when the first search found no usable
+       * candidate. This avoids doubling the slow WordPress search path.
        */
-      return browseArchiveMSM(
-        mediaType
-      ).then(function(archiveItems) {
-        var merged =
-          candidates.concat(
-            Array.isArray(archiveItems)
-              ? archiveItems
-              : []
-          );
+      if (
+        !best &&
+        info.originalTitle &&
+        normalizeTitle(info.originalTitle) !== normalizeTitle(info.title)
+      ) {
+        return searchSite(info.originalTitle).then(function(extra) {
+          extra.sort(function(a, b) {
+            return scoreCandidate(b, info, mediaType) - scoreCandidate(a, info, mediaType);
+          });
+          return extra[0] || null;
+        });
+      }
 
-        var archiveBest =
-          choose(merged);
-
-        if (archiveBest) {
-          console.log(
-            "[MSM21] archive discovery hit " +
-            archiveBest.href
-          );
-        }
-
-        return archiveBest;
-      });
+      return best || null;
     });
   }).then(function(best) {
-    if (!best) {
-      throw new Error(
-        "MSM21 title not found"
-      );
+    if (!best) throw new Error("MSM21 title not found");
+
+    if (!best.__detailHtml && scoreCandidate(best, info, mediaType) < 30) {
+      throw new Error("MSM21 match confidence too low");
     }
 
     return best;
@@ -1509,79 +978,6 @@ function firstNonEmpty(tasks, timeoutMs) {
         }
       );
     });
-  });
-}
-
-
-function collectValuesBounded(factories, concurrency, timeoutMs) {
-  var jobs = Array.isArray(factories) ? factories : [];
-  if (!jobs.length) return Promise.resolve([]);
-
-  var limit = Math.max(1, Number(concurrency || 1));
-
-  return new Promise(function(resolve) {
-    var output = [];
-    var next = 0;
-    var active = 0;
-    var finished = false;
-
-    var timer = setTimeout(function() {
-      finish();
-    }, Math.max(1, Number(timeoutMs || 1)));
-
-    function finish() {
-      if (finished) return;
-      finished = true;
-      clearTimeout(timer);
-      resolve(output);
-    }
-
-    function pump() {
-      if (finished) return;
-
-      if (next >= jobs.length && active === 0) {
-        finish();
-        return;
-      }
-
-      while (
-        !finished &&
-        active < limit &&
-        next < jobs.length
-      ) {
-        var factory = jobs[next++];
-        active += 1;
-
-        Promise.resolve()
-          .then(factory)
-          .then(function(value) {
-            if (!finished && value !== undefined && value !== null) {
-              output.push(value);
-            }
-          })
-          .catch(function() {})
-          .then(function() {
-            active -= 1;
-            pump();
-          });
-      }
-    }
-
-    pump();
-  });
-}
-
-function collectResolvedBounded(factories, concurrency, timeoutMs) {
-  return collectValuesBounded(
-    factories,
-    concurrency,
-    timeoutMs
-  ).then(function(results) {
-    var merged = emptyResolved();
-    results.forEach(function(result) {
-      mergeResolved(merged, result || emptyResolved());
-    });
-    return merged;
   });
 }
 
@@ -2577,46 +1973,43 @@ function scanExternalPlayerScripts(html, pageUrl, referer) {
   var scripts = extractExternalScriptUrls(html, pageUrl);
   if (!scripts.length) return Promise.resolve(emptyResolved());
 
-  return collectResolvedBounded(
+  return firstNonEmpty(
     scripts.map(function(scriptUrl) {
-      return function() {
-        return requestRaw(
-          scriptUrl,
-          {
-            headers: {
-              "Referer": pageUrl,
-              "Accept": "*/*"
-            },
-            redirect: "follow"
+      return requestRaw(
+        scriptUrl,
+        {
+          headers: {
+            "Referer": pageUrl,
+            "Accept": "*/*"
           },
-          1100,
-          "MSM21 player script " + scriptUrl
-        ).then(function(script) {
-          var resolved = resolvedFromText(
-            script.text,
-            script.url || scriptUrl,
-            {
-              "Referer": pageUrl
-            }
-          );
-
-          if (resolved.streams.length) {
-            console.log(
-              "[MSM21] script stream hit host=" + hostOf(script.url || scriptUrl)
-            );
+          redirect: "follow"
+        },
+        1100,
+        "MSM21 player script " + scriptUrl
+      ).then(function(script) {
+        var resolved = resolvedFromText(
+          script.text,
+          script.url || scriptUrl,
+          {
+            "Referer": pageUrl
           }
-          return resolved;
-        }).catch(function() {
-          return emptyResolved();
-        });
-      };
+        );
+
+        if (resolved.streams.length) {
+          console.log(
+            "[MSM21] script stream hit host=" + hostOf(script.url || scriptUrl)
+          );
+        }
+        return resolved;
+      }).catch(function() {
+        return emptyResolved();
+      });
     }),
-    2,
-    1700
+    1350
   );
 }
 
-function extractGenericHost(url, referer, depth, allowWebView) {
+function extractGenericHost(url, referer, depth) {
   return requestRaw(url, {
     headers: referer ? { "Referer": referer } : {},
     redirect: "follow"
@@ -2642,23 +2035,19 @@ function extractGenericHost(url, referer, depth, allowWebView) {
         var nested = extractIframes(result.text, finalUrl).slice(0, 2);
         if (!nested.length) return resolved;
 
-        return collectResolvedBounded(
+        return firstNonEmpty(
           nested.map(function(child) {
-            return function() {
-              return loadExtractorEquivalent(
-                child,
-                finalUrl,
-                Number(depth || 0) + 1,
-                allowWebView
-              ).catch(function() {
-                return emptyResolved();
-              });
-            };
+            return loadExtractorEquivalent(
+              child,
+              finalUrl,
+              Number(depth || 0) + 1
+            ).catch(function() {
+              return emptyResolved();
+            });
           }),
-          2,
-          1900
-        ).then(function(children) {
-          mergeResolved(resolved, children);
+          1700
+        ).then(function(child) {
+          mergeResolved(resolved, child);
           return resolved;
         });
       });
@@ -2737,7 +2126,7 @@ function resolveWithNativeWebView(url, referer, label) {
 
   return globalThis.webviewResolve(absolute, {
     referer: referer || absolute,
-    timeoutMs: 6500,
+    timeoutMs: 13000,
     finishAfterFirstMs: 600,
     clickDelaysMs: [
       650,
@@ -2745,7 +2134,9 @@ function resolveWithNativeWebView(url, referer, label) {
       2200,
       3400,
       5000,
-      6200
+      7000,
+      9500,
+      12000
     ],
     match: [
       "/sora/",
@@ -2845,7 +2236,7 @@ function extractorNameFor(url) {
   return "Generic";
 }
 
-function dispatchExtractor(url, referer, depth, allowWebView) {
+function dispatchExtractor(url, referer, depth) {
   var name = extractorNameFor(url);
   console.log("[MSM21] extractor=" + name + " host=" + hostOf(url));
 
@@ -2859,11 +2250,9 @@ function dispatchExtractor(url, referer, depth, allowWebView) {
   else if (name === "Vidmoly") work = extractVidmoly(url, referer);
   else if (name === "LuluStream") work = extractLulu(url, referer);
   else if (name === "Voe") work = extractVoe(url, referer);
-  else if (name === "ByseSX") work = extractGenericHost(url, referer, depth || 0, allowWebView);
-  else if (name === "BrowserPlayer") work = allowWebView === false
-    ? emptyResolved()
-    : resolveWithNativeWebView(url, referer, "BrowserPlayer");
-  else work = extractGenericHost(url, referer, depth || 0, allowWebView);
+  else if (name === "ByseSX") work = extractGenericHost(url, referer, depth || 0);
+  else if (name === "BrowserPlayer") work = resolveWithNativeWebView(url, referer, "BrowserPlayer");
+  else work = extractGenericHost(url, referer, depth || 0);
 
   return Promise.resolve(work).then(function(resolved) {
     var streams = resolved && Array.isArray(resolved.streams) ? resolved.streams.length : 0;
@@ -2875,7 +2264,7 @@ function dispatchExtractor(url, referer, depth, allowWebView) {
      */
     if (streams) return resolved || emptyResolved();
 
-    return extractGenericHost(url, referer, 1, allowWebView)
+    return extractGenericHost(url, referer, 1)
       .catch(function() {
         return resolved || emptyResolved();
       })
@@ -2887,10 +2276,6 @@ function dispatchExtractor(url, referer, depth, allowWebView) {
 
         if (genericStreams) return genericResolved;
 
-        if (allowWebView === false) {
-          return genericResolved || resolved || emptyResolved();
-        }
-
         return resolveWithNativeWebView(
           url,
           referer,
@@ -2900,7 +2285,7 @@ function dispatchExtractor(url, referer, depth, allowWebView) {
   });
 }
 
-function loadExtractorEquivalent(url, referer, depth, allowWebView) {
+function loadExtractorEquivalent(url, referer, depth) {
   var absolute = safeUrl(url, referer);
   if (!absolute) return Promise.resolve(emptyResolved());
 
@@ -2937,7 +2322,7 @@ function loadExtractorEquivalent(url, referer, depth, allowWebView) {
       "[MSM21] iframe=" + hostOf(absolute) +
       (finalUrl !== absolute ? " redirect=" + hostOf(finalUrl) : "")
     );
-    return dispatchExtractor(finalUrl, referer || absolute, depth || 0, allowWebView);
+    return dispatchExtractor(finalUrl, referer || absolute, depth || 0);
   });
 }
 
@@ -2953,14 +2338,13 @@ function attachMirrorLabel(resolved, mirror) {
   return output;
 }
 
-function resolveMirror(mirror, pageUrl, allowWebView) {
+function resolveMirror(mirror, pageUrl) {
   var mirrorHost = hostOf(mirror && mirror.url);
   if (mirrorHost && DNS_DEAD_HOSTS[mirrorHost]) {
-    console.log("[MSM21] skipping DNS-dead host=" + mirrorHost);
+    vueoTrace("HOST_SKIP", { host: mirrorHost, reason: "dns-dead" });
     return Promise.resolve({ streams: [], subtitles: [] });
   }
-
-  return loadExtractorEquivalent(mirror.url, pageUrl, 0, allowWebView)
+  return loadExtractorEquivalent(mirror.url, pageUrl, 0)
     .then(function(resolved) {
       return attachMirrorLabel(resolved, mirror);
     })
@@ -2969,7 +2353,7 @@ function resolveMirror(mirror, pageUrl, allowWebView) {
       var failedHost = hostOf(mirror.url);
       if (failedHost && /(?:NXDOMAIN|unknown host|name or service not known|nodename nor servname)/i.test(message)) {
         DNS_DEAD_HOSTS[failedHost] = true;
-        vueoCandidateTrace("HOST_DEAD", { host: failedHost, reason: "dns" });
+        vueoTrace("HOST_DEAD", { host: failedHost, reason: "dns" });
       }
       console.log(
         "[MSM21] extractor failed server=" + mirror.label +
@@ -2980,56 +2364,21 @@ function resolveMirror(mirror, pageUrl, allowWebView) {
     });
 }
 
-function resolveOption(option, pageUrl, allowWebView) {
+function resolveOption(option, pageUrl) {
   return fetchMirrors(option, pageUrl).then(function(mirrors) {
-    if (!mirrors.length) return emptyResolved();
-
-    return collectResolvedBounded(
-      mirrors.map(function(mirror) {
-        return function() {
-          return resolveMirror(
-            mirror,
-            pageUrl,
-            allowWebView
-          );
-        };
+    if (!mirrors.length) return { streams: [], subtitles: [] };
+    return firstNonEmpty(
+      mirrors.slice(0, 3).map(function(mirror) {
+        return resolveMirror(mirror, pageUrl);
       }),
-      2,
-      6500
+      15500
     );
   });
 }
 
-function webViewMirrorPriority(mirror) {
-  var value =
-    (
-      String(mirror && mirror.label || "") +
-      " " +
-      String(mirror && mirror.url || "")
-    ).toLowerCase();
-
-  if (value.indexOf("abyss") !== -1) return 0;
-  if (value.indexOf("playerx") !== -1) return 1;
-  if (value.indexOf("veev") !== -1) return 2;
-  if (extractorNameFor(mirror && mirror.url) === "BrowserPlayer") return 3;
-  return 4;
-}
-
-function uniqueMirrors(mirrors) {
-  var seen = Object.create(null);
-  return (mirrors || []).filter(function(mirror) {
-    var url = String(mirror && mirror.url || "").trim();
-    if (!url || seen[url]) return false;
-    seen[url] = true;
-    return true;
-  });
-}
 function resolvePlayback(html, pageUrl) {
   var options = parsePlayerOptions(html);
-  var staticMirrors =
-    uniqueMirrors(
-      collectStaticMirrors(html, pageUrl)
-    );
+  var staticMirrors = collectStaticMirrors(html, pageUrl);
 
   console.log(
     "[MSM21] options=" +
@@ -3043,200 +2392,48 @@ function resolvePlayback(html, pageUrl) {
     );
   }
 
-  var uniqueOptions = [];
+  var fast = options
+    .filter(isFastOption)
+    .sort(function(a, b) { return fastPriority(a) - fastPriority(b); })
+    .slice(0, 8);
+
+  var preferredFallback = options
+    .slice()
+    .sort(function(a, b) { return fallbackPriority(a) - fallbackPriority(b); })
+    .slice(0, 6);
+
+  var candidates = [];
   var optionSeen = Object.create(null);
 
-  options.forEach(function(option) {
+  fast.concat(preferredFallback).forEach(function(option) {
     var key = [option.post, option.nume, option.type].join("|");
     if (optionSeen[key]) return;
     optionSeen[key] = true;
-    uniqueOptions.push(option);
+    candidates.push(option);
   });
 
-  var fast = uniqueOptions
-    .filter(isFastOption)
-    .sort(function(a, b) {
-      return fastPriority(a) - fastPriority(b);
-    });
+  var tasks = [];
 
-  var fastKeys = Object.create(null);
-  fast.forEach(function(option) {
-    fastKeys[
-      [option.post, option.nume, option.type].join("|")
-    ] = true;
+  staticMirrors.slice(0, 3).forEach(function(mirror) {
+    tasks.push(resolveMirror(mirror, pageUrl));
   });
 
-  var fallback = uniqueOptions
-    .filter(function(option) {
-      return !fastKeys[
-        [option.post, option.nume, option.type].join("|")
-      ];
-    })
-    .sort(function(a, b) {
-      return fallbackPriority(a) - fallbackPriority(b);
-    });
+  candidates.forEach(function(option) {
+    tasks.push(resolveOption(option, pageUrl));
+  });
 
-  var orderedOptions =
-    fast.concat(fallback);
+  if (!tasks.length) {
+    return Promise.resolve({ streams: [], subtitles: [] });
+  }
 
   /*
-   * No fixed 8+6 option cap anymore. Every Zeta option is eligible.
-   * Nuvio still has a ~20s provider budget, so work is bounded by
-   * concurrency/time rather than silently deleting options by index.
+   * Cloudstream starts several native hosts concurrently. Doing the same here
+   * prevents a dead BrowserPlayer mirror from consuming the whole provider
+   * budget before another server is tried.
    */
-  var factories = [];
-
-  if (staticMirrors.length) {
-    factories.push(function() {
-      return collectValuesBounded(
-        staticMirrors.map(function(mirror) {
-          return function() {
-            return resolveMirror(
-              mirror,
-              pageUrl,
-              false
-            ).then(function(resolved) {
-              return {
-                mirror: mirror,
-                resolved: resolved
-              };
-            });
-          };
-        }),
-        3,
-        7200
-      );
-    });
-  }
-
-  orderedOptions.forEach(function(option) {
-    factories.push(function() {
-      return fetchMirrors(
-        option,
-        pageUrl
-      ).then(function(mirrors) {
-        mirrors =
-          uniqueMirrors(mirrors);
-
-        return collectValuesBounded(
-          mirrors.map(function(mirror) {
-            return function() {
-              return resolveMirror(
-                mirror,
-                pageUrl,
-                false
-              ).then(function(resolved) {
-                return {
-                  mirror: mirror,
-                  resolved: resolved
-                };
-              });
-            };
-          }),
-          2,
-          6500
-        );
-      });
-    });
-  });
-
-  if (!factories.length) {
-    return Promise.resolve(emptyResolved());
-  }
-
-  return collectValuesBounded(
-    factories,
-    3,
-    9800
-  ).then(function(groups) {
-    var merged = emptyResolved();
-    var allMirrors = [];
-    var successful = Object.create(null);
-
-    groups.forEach(function(group) {
-      (Array.isArray(group) ? group : [])
-        .forEach(function(entry) {
-          if (!entry || !entry.mirror) return;
-
-          allMirrors.push(entry.mirror);
-
-          var resolved =
-            entry.resolved || emptyResolved();
-
-          mergeResolved(
-            merged,
-            resolved
-          );
-
-          if (
-            resolved.streams &&
-            resolved.streams.length
-          ) {
-            successful[entry.mirror.url] = true;
-          }
-        });
-    });
-
-    allMirrors =
-      uniqueMirrors(
-        staticMirrors.concat(allMirrors)
-      );
-
-    var unresolved =
-      allMirrors
-        .filter(function(mirror) {
-          return !successful[mirror.url];
-        })
-        .sort(function(a, b) {
-          return (
-            webViewMirrorPriority(a) -
-            webViewMirrorPriority(b)
-          );
-        });
-
-    console.log(
-      "[MSM21] standard streams=" +
-      merged.streams.length +
-      " unresolved=" +
-      unresolved.length
-    );
-
-    if (
-      !nativeWebViewAvailable() ||
-      !unresolved.length
-    ) {
-      return merged;
-    }
-
-    /*
-     * WebView is the expensive fallback. Keep only this lane capped,
-     * matching the proven Cloudstream strategy.
-     */
-    var webViewCandidates =
-      unresolved.slice(0, 3);
-
-    return collectResolvedBounded(
-      webViewCandidates.map(function(mirror) {
-        return function() {
-          return resolveMirror(
-            mirror,
-            pageUrl,
-            true
-          );
-        };
-      }),
-      2,
-      6800
-    ).then(function(webViewResolved) {
-      mergeResolved(
-        merged,
-        webViewResolved
-      );
-
-      return merged;
-    });
-  });
+  return firstNonEmpty(tasks, 16500);
 }
+
 function buildStreams(resolved, info, mediaType, season, episode) {
   var subtitles = resolved && Array.isArray(resolved.subtitles)
     ? resolved.subtitles
@@ -3354,7 +2551,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
       return streams;
     });
 
-  return withSoftTimeout(work, 19500, "MSM21 provider")
+  return withSoftTimeout(work, 17000, "MSM21 provider")
     .catch(function(error) {
       console.error(
         "[MSM21] " +

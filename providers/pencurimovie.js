@@ -1,5 +1,75 @@
 "use strict";
 
+/* VUEO_SHARED_DISCOVERY_CONTEXT_V1 */
+/* VUEO_PROVIDER_REPAIR_V16 */
+/* VUEO_PROVIDER_REPAIR_V17 */
+function vueoTrace(stage, details) {
+  try {
+    if (typeof globalThis !== "undefined" && typeof globalThis.vueoTrace === "function") {
+      globalThis.vueoTrace(stage, details || {});
+    }
+  } catch (_) {}
+}
+
+function vueoContextFromRaw(raw) {
+  if (!raw) return null;
+  if (typeof raw === "string") {
+    try { return JSON.parse(raw); } catch (_) { return null; }
+  }
+  return typeof raw === "object" ? raw : null;
+}
+
+function vueoSharedTmdb(url, fallback) {
+  function normalize(context) {
+    var ctx = vueoContextFromRaw(context);
+    if (!ctx || ctx.error) return null;
+    var tmdb = ctx.tmdb && typeof ctx.tmdb === "object" ? ctx.tmdb : null;
+    if (!tmdb) {
+      tmdb = {
+        id: ctx.tmdbId,
+        title: ctx.mediaType === "movie" ? ctx.title : undefined,
+        name: ctx.mediaType === "tv" ? ctx.title : undefined,
+        original_title: ctx.mediaType === "movie" ? (ctx.originalTitle || ctx.title) : undefined,
+        original_name: ctx.mediaType === "tv" ? (ctx.originalTitle || ctx.title) : undefined,
+        release_date: ctx.mediaType === "movie" && ctx.year ? String(ctx.year) + "-01-01" : "",
+        first_air_date: ctx.mediaType === "tv" && ctx.year ? String(ctx.year) + "-01-01" : "",
+        external_ids: { imdb_id: ctx.imdbId || "" }
+      };
+    }
+    vueoTrace("METADATA", {
+      shared: true,
+      title: ctx.title || tmdb.title || tmdb.name || "",
+      year: ctx.year || "",
+      imdbId: ctx.imdbId || "",
+      aliases: ctx.aliases && ctx.aliases.length ? ctx.aliases.length : 0
+    });
+    return tmdb;
+  }
+
+  try {
+    if (typeof globalThis !== "undefined") {
+      var direct = normalize(globalThis.VUEO_DISCOVERY_CONTEXT);
+      if (direct) return Promise.resolve(direct);
+      if (typeof globalThis.vueoDiscoveryContext === "function") {
+        return Promise.resolve(globalThis.vueoDiscoveryContext(url))
+          .then(function(raw) {
+            var shared = normalize(raw);
+            if (shared) return shared;
+            throw new Error("shared context unavailable");
+          })
+          .catch(function() {
+            vueoTrace("METADATA_FALLBACK", { shared: false });
+            return fallback();
+          });
+      }
+    }
+  } catch (_) {}
+
+  vueoTrace("METADATA_FALLBACK", { shared: false });
+  return fallback();
+}
+
+
 var PROVIDER_NAME = "PencuriMovie";
 var FALLBACK_BASE_URL = "https://ww21.pencurimovie.sbs";
 var DOMAIN_CONFIG_URL = "https://raw.githubusercontent.com/Asm0d3usX/CloudX/builds/Website.json";
@@ -17,52 +87,6 @@ var DEFAULT_HEADERS = {
 
 var cachedBaseUrl = null;
 var cachedBaseUrlPromise = null;
-
-/* VUEO_PROVIDER_REPAIR_V16 */
-/* VUEO_SHARED_DISCOVERY_CONTEXT_V1 */
-function vueoSharedTmdb(url, fallback) {
-  if (
-    typeof globalThis !== "undefined" &&
-    typeof globalThis.vueoDiscoveryContext === "function"
-  ) {
-    return globalThis.vueoDiscoveryContext(url)
-      .then(function(context) {
-        if (context && context.tmdb) {
-          if (typeof globalThis.vueoTrace === "function") {
-            globalThis.vueoTrace("METADATA", {
-              shared: true,
-              title: context.title || "",
-              year: context.year || "",
-              imdbId: context.imdbId || "",
-              aliases: Array.isArray(context.aliases) ? context.aliases.length : 0
-            });
-          }
-          return context.tmdb;
-        }
-        throw new Error("Shared discovery context is empty");
-      })
-      .catch(function(error) {
-        if (typeof globalThis.vueoTrace === "function") {
-          globalThis.vueoTrace("METADATA_FALLBACK", {
-            reason: error && error.message ? error.message : String(error)
-          });
-        }
-        return fallback();
-      });
-  }
-  return fallback();
-}
-
-function vueoCandidateTrace(stage, details) {
-  try {
-    if (
-      typeof globalThis !== "undefined" &&
-      typeof globalThis.vueoTrace === "function"
-    ) {
-      globalThis.vueoTrace(stage, details || {});
-    }
-  } catch (_) {}
-}
 
 function withSoftTimeout(promise, timeoutMs, label) {
   return new Promise(function(resolve, reject) {
@@ -255,246 +279,6 @@ function titleScore(candidate, expected) {
   return Math.round((recall * 0.72 + precision * 0.28) * 72);
 }
 
-
-/* VUEO_TITLE_PROFILE_V1 */
-function collectTmdbAliases(data, mediaType) {
-  var output = [];
-  var seen = {};
-
-  function add(value, priority) {
-    var text = String(value || "").trim();
-    var key = normalizeTitle(text);
-    if (!text || !key || seen[key]) return;
-
-    seen[key] = true;
-    output.push({
-      title: text,
-      priority: Number(priority || 0)
-    });
-  }
-
-  add(data && (data.title || data.name), 100);
-  add(
-    data &&
-    (
-      data.original_title ||
-      data.original_name
-    ),
-    95
-  );
-
-  var altRoot =
-    data &&
-    data.alternative_titles;
-
-  var altItems =
-    altRoot &&
-    (
-      Array.isArray(altRoot.titles)
-        ? altRoot.titles
-        : Array.isArray(altRoot.results)
-          ? altRoot.results
-          : []
-    );
-
-  altItems.forEach(function(item) {
-    if (!item) return;
-
-    var country =
-      String(
-        item.iso_3166_1 || ""
-      ).toUpperCase();
-
-    var boost =
-      country === "US" ||
-      country === "GB"
-        ? 86
-        : country === "MY" ||
-          country === "ID"
-          ? 82
-          : 72;
-
-    add(
-      item.title ||
-      item.name,
-      boost
-    );
-  });
-
-  var translations =
-    data &&
-    data.translations &&
-    Array.isArray(
-      data.translations.translations
-    )
-      ? data.translations.translations
-      : [];
-
-  translations.forEach(function(item) {
-    var row =
-      item &&
-      item.data &&
-      typeof item.data === "object"
-        ? item.data
-        : {};
-
-    var lang =
-      String(
-        item &&
-        item.iso_639_1 ||
-        ""
-      ).toLowerCase();
-
-    var boost =
-      lang === "en"
-        ? 88
-        : lang === "ms" ||
-          lang === "id"
-          ? 80
-          : 68;
-
-    add(
-      row.title ||
-      row.name,
-      boost
-    );
-  });
-
-  output.sort(function(a, b) {
-    return b.priority - a.priority;
-  });
-
-  return output
-    .map(function(item) {
-      return item.title;
-    })
-    .slice(0, 12);
-}
-
-function bestAliasTitleScore(candidate, info) {
-  var aliases =
-    info &&
-    Array.isArray(info.aliases) &&
-    info.aliases.length
-      ? info.aliases
-      : [
-          info && info.title,
-          info && info.originalTitle
-        ];
-
-  var best = 0;
-
-  aliases.forEach(function(alias) {
-    best = Math.max(
-      best,
-      titleScore(
-        candidate,
-        alias
-      )
-    );
-  });
-
-  return best;
-}
-
-
-/* VUEO_DISCOVERY_REBUILD_V1 */
-function cleanDiscoveryTitlePencuri(value) {
-  return normalizeTitle(
-    String(value || "")
-      .replace(/\[(?:[^\]]{0,120})\]/g, " ")
-      .replace(/\b(?:19|20)\d{2}\b/g, " ")
-      .replace(/\bs\d{1,2}(?:\s*[-–]\s*s\d{1,2})?\b/gi, " ")
-      .replace(/\b(?:ep|episode|e)\s*[-#:]?\s*\d{1,3}\b/gi, " ")
-      .replace(/\b(?:2160p|1080p|720p|480p|4k|web[- ]?dl|bluray|hevc|h26[45]|10bit|malaysub|malaydub|series|movies?)\b/gi, " ")
-  );
-}
-
-function bestDiscoveryTitleScorePencuri(candidate, info) {
-  var aliases =
-    info &&
-    Array.isArray(info.aliases) &&
-    info.aliases.length
-      ? info.aliases
-      : [
-          info && info.title,
-          info && info.originalTitle
-        ];
-
-  var cleanCandidate =
-    cleanDiscoveryTitlePencuri(candidate);
-
-  var best = 0;
-
-  aliases.forEach(function(alias) {
-    var cleanAlias =
-      cleanDiscoveryTitlePencuri(alias);
-
-    if (!cleanCandidate || !cleanAlias) return;
-
-    if (cleanCandidate === cleanAlias) {
-      best = Math.max(best, 100);
-    } else if (
-      cleanCandidate.indexOf(cleanAlias) !== -1 ||
-      cleanAlias.indexOf(cleanCandidate) !== -1
-    ) {
-      best = Math.max(best, 90);
-    } else {
-      best = Math.max(
-        best,
-        titleScore(
-          cleanCandidate,
-          cleanAlias
-        )
-      );
-    }
-  });
-
-  return best;
-}
-
-function buildAliasQueries(info, limit) {
-  var output = [];
-  var seen = {};
-
-  var aliases =
-    info &&
-    Array.isArray(info.aliases)
-      ? info.aliases
-      : [
-          info && info.title,
-          info && info.originalTitle
-        ];
-
-  aliases.forEach(function(alias) {
-    var text =
-      String(alias || "")
-        .trim();
-
-    var key =
-      normalizeTitle(text);
-
-    if (
-      !text ||
-      !key ||
-      seen[key]
-    ) {
-      return;
-    }
-
-    seen[key] = true;
-    output.push(text);
-  });
-
-  return output.slice(
-    0,
-    Math.max(
-      1,
-      Number(limit || 4)
-    )
-  );
-}
-
 function yearFrom(value) {
   var match = String(value || "").match(/\b(19|20)\d{2}\b/);
   return match ? match[0] : "";
@@ -504,20 +288,16 @@ function getTmdbInfo(tmdbId, mediaType) {
   var endpoint = mediaType === "movie" ? "movie" : "tv";
   var url =
     "https://api.themoviedb.org/3/" + endpoint + "/" + encodeURIComponent(tmdbId) +
-    "?api_key=" + TMDB_API_KEY + "&append_to_response=alternative_titles,translations,external_ids";
+    "?api_key=" + TMDB_API_KEY;
 
-  return vueoSharedTmdb(
-    url,
-    function() {
-      return requestJson(url, { "Accept": "application/json" }, 1400);
-    }
-  ).then(function(data) {
+  return vueoSharedTmdb(url, function() {
+    return requestJson(url, { "Accept": "application/json" }, 1400);
+  }).then(function(data) {
     return {
       tmdbId: String(tmdbId),
       title: String(data && (data.title || data.name) || ""),
       originalTitle: String(data && (data.original_title || data.original_name) || ""),
-      year: String(data && (data.release_date || data.first_air_date) || "").split("-")[0],
-      aliases: collectTmdbAliases(data, mediaType)
+      year: String(data && (data.release_date || data.first_air_date) || "").split("-")[0]
     };
   });
 }
@@ -525,257 +305,72 @@ function getTmdbInfo(tmdbId, mediaType) {
 function parseSearchResults(html, baseUrl) {
   var results = [];
   var seen = {};
-  var rank = 0;
-
-  function add(
-    title,
-    href,
-    year,
-    isSeries
-  ) {
-    var cleanTitle =
-      String(title || "")
-        .replace(/\s+/g, " ")
-        .trim();
-
-    var absolute =
-      safeUrl(
-        href,
-        baseUrl
-      );
-
-    if (
-      !cleanTitle ||
-      !absolute ||
-      seen[absolute]
-    ) {
-      return;
-    }
-
-    if (
-      /\/(?:category|tag|author|page)\//i.test(absolute)
-    ) {
-      return;
-    }
-
-    seen[absolute] = true;
-
-    results.push({
-      title: cleanTitle,
-      href: absolute,
-      year: year || yearFrom(cleanTitle),
-      isSeries:
-        Boolean(isSeries) ||
-        /\/(?:series|tvshows)\//i.test(absolute),
-      rank: rank++
-    });
-  }
 
   function addFromBlock(block) {
-    var anchorMatch =
-      String(block || "")
-        .match(
-          /<a\b[^>]*href\s*=\s*(["'])[\s\S]*?\1[^>]*>/i
-        );
-
+    var anchorMatch = String(block || "").match(/<a\b[^>]*href\s*=\s*(["'])[\s\S]*?\1[^>]*>/i);
     if (!anchorMatch) return;
 
-    var tag =
-      anchorMatch[0];
+    var tag = anchorMatch[0];
+    var href = safeUrl(getAttr(tag, "href"), baseUrl);
+    if (!href || seen[href]) return;
 
-    var href =
-      getAttr(
-        tag,
-        "href"
-      );
-
-    var title =
-      getAttr(
-        tag,
-        "oldtitle"
-      ) ||
-      getAttr(
-        tag,
-        "title"
-      );
-
-    if (title) {
-      title =
-        title
-          .split("(")[0]
-          .trim();
-    }
+    var title = getAttr(tag, "oldtitle") || getAttr(tag, "title");
+    if (title) title = title.split("(")[0].trim();
 
     if (!title) {
-      var heading =
-        String(block || "")
-          .match(
-            /<(?:h2|h3)\b[^>]*>([\s\S]*?)<\/(?:h2|h3)>/i
-          );
-
-      title =
-        heading
-          ? stripTags(
-              heading[1]
-            )
-          : "";
+      var h2 = block.match(/<h2\b[^>]*>([\s\S]*?)<\/h2>/i);
+      title = h2 ? stripTags(h2[1]) : "";
     }
 
-    if (!title) {
-      var image =
-        String(block || "")
-          .match(
-            /<img\b[^>]*alt\s*=\s*(["'])([\s\S]*?)\1[^>]*>/i
-          );
+    if (!title) return;
 
-      title =
-        image
-          ? stripTags(
-              image[2]
-            )
-          : "";
-    }
-
-    add(
-      title,
-      href,
-      yearFrom(
-        getAttr(
-          tag,
-          "oldtitle"
-        )
-      ) ||
-        yearFrom(
-          block
-        ),
+    var rawYear = yearFrom(getAttr(tag, "oldtitle")) || yearFrom(block);
+    var isSeries =
       /mli-eps/i.test(block) ||
-        /tvseason/i.test(block)
-    );
+      /\/series(?:\/|$)/i.test(href) ||
+      /tvseason/i.test(block);
+
+    seen[href] = true;
+    results.push({
+      title: title,
+      href: href,
+      year: rawYear,
+      isSeries: isSeries
+    });
   }
 
   var cardRegex =
     /<div\b[^>]*class\s*=\s*(["'])[^"']*\bml-item\b[^"']*\1[^>]*>([\s\S]*?)(?=<div\b[^>]*class\s*=\s*(["'])[^"']*\bml-item\b[^"']*\3[^>]*>|$)/gi;
-
   var card;
-
-  while (
-    (card = cardRegex.exec(
-      String(html || "")
-    ))
-  ) {
-    addFromBlock(
-      card[0]
-    );
+  while ((card = cardRegex.exec(html))) {
+    addFromBlock(card[0]);
   }
 
-  /*
-   * Generic discovery fallback for site-layout changes.
-   */
-  var anchorRegex =
-    /<a\b[^>]*href\s*=\s*(["'])[\s\S]*?\1[^>]*>([\s\S]*?)<\/a>/gi;
-
-  var anchor;
-
-  while (
-    (anchor = anchorRegex.exec(
-      String(html || "")
-    ))
-  ) {
-    var tag =
-      anchor[0];
-
-    var href =
-      getAttr(
-        tag,
-        "href"
-      );
-
-    if (
-      !href ||
-      !/\/(?:series|tvshows|movies?)\//i.test(href)
-    ) {
-      continue;
+  if (!results.length) {
+    var anchorRegex = /<a\b[^>]*(?:oldtitle|title)\s*=\s*(["'])[\s\S]*?\1[^>]*>/gi;
+    var anchor;
+    while ((anchor = anchorRegex.exec(html))) {
+      addFromBlock(anchor[0]);
     }
-
-    var title =
-      getAttr(
-        tag,
-        "oldtitle"
-      ) ||
-      getAttr(
-        tag,
-        "title"
-      ) ||
-      stripTags(
-        anchor[2]
-      );
-
-    add(
-      title,
-      href,
-      yearFrom(title),
-      /\/(?:series|tvshows)\//i.test(href)
-    );
   }
 
   return results;
 }
 
 function scoreCandidate(item, info, mediaType) {
-  var score =
-    bestDiscoveryTitleScorePencuri(
-      item.title,
-      info
-    );
+  var score = Math.max(
+    titleScore(item.title, info.title),
+    titleScore(item.title, info.originalTitle)
+  );
 
-  if (
-    info.year &&
-    item.year &&
-    info.year === item.year
-  ) {
-    score += 18;
-  }
-
-  if (
-    mediaType === "tv" &&
-    item.isSeries
-  ) {
-    score += 24;
-  }
-
-  if (
-    mediaType === "movie" &&
-    !item.isSeries
-  ) {
-    score += 18;
-  }
-
-  if (
-    mediaType === "tv" &&
-    !item.isSeries
-  ) {
-    score -= 40;
-  }
-
-  if (
-    mediaType === "movie" &&
-    item.isSeries
-  ) {
-    score -= 40;
-  }
-
-  score +=
-    Math.max(
-      0,
-      8 -
-      Number(
-        item.rank ||
-        0
-      )
-    );
+  if (info.year && item.year && info.year === item.year) score += 28;
+  if (mediaType === "tv" && item.isSeries) score += 24;
+  if (mediaType === "movie" && !item.isSeries) score += 18;
+  if (mediaType === "tv" && !item.isSeries) score -= 24;
 
   return score;
 }
+
 
 function slugifyTitle(value) {
   var text = String(value || "");
@@ -846,11 +441,10 @@ function isDirectPencuriMatch(result, info, mediaType) {
   if (slug && pathSlug.indexOf(slug) === 0) return true;
 
   var identity = extractPageIdentity(body);
-  var score =
-    bestAliasTitleScore(
-      identity.title,
-      info
-    );
+  var score = Math.max(
+    titleScore(identity.title, info.title),
+    titleScore(identity.title, info.originalTitle)
+  );
 
   if (score < 52) return false;
   if (info.year && identity.year && String(info.year) !== String(identity.year)) {
@@ -861,11 +455,13 @@ function isDirectPencuriMatch(result, info, mediaType) {
 }
 
 function buildPencuriDirectCandidates(baseUrl, info, mediaType) {
-  var titles =
-    buildAliasQueries(
-      info,
-      8
-    );
+  var titles = [info.title];
+  if (
+    info.originalTitle &&
+    normalizeTitle(info.originalTitle) !== normalizeTitle(info.title)
+  ) {
+    titles.push(info.originalTitle);
+  }
 
   var output = [];
   var seen = Object.create(null);
@@ -883,9 +479,14 @@ function buildPencuriDirectCandidates(baseUrl, info, mediaType) {
       paths = info.year
         ? [
             "/series/" + slug + "-" + info.year + "/",
-            "/series/" + slug + "/"
+            "/tvshows/" + slug + "-" + info.year + "/",
+            "/series/" + slug + "/",
+            "/tvshows/" + slug + "/"
           ]
-        : ["/series/" + slug + "/"];
+        : [
+            "/series/" + slug + "/",
+            "/tvshows/" + slug + "/"
+          ];
     }
 
     paths.forEach(function(path) {
@@ -903,44 +504,40 @@ function tryDirectPencuriPage(baseUrl, info, mediaType) {
   var candidates = buildPencuriDirectCandidates(baseUrl, info, mediaType);
   if (!candidates.length) return Promise.resolve(null);
 
-  /* VUEO_FAST_DISCOVERY_V1
-   * Preserve every direct slug candidate but probe them in a bounded pool.
-   * Choose the earliest valid candidate in the original preference order.
-   */
-  return collectValuesBounded(
-    candidates.map(function(url, index) {
-      return function() {
-        var timeoutMs = index === 0 ? 1400 : 700;
-        return requestText(
-          url,
-          { "Referer": trimSlash(cachedBaseUrl || baseUrl) + "/" },
-          timeoutMs
-        ).then(function(result) {
-          updateBaseFromUrl(result.url || url);
-          if (!isDirectPencuriMatch(result, info, mediaType)) return null;
-          return {
-            index: index,
-            match: {
-              title: info.title,
-              href: result.url || url,
-              year: info.year,
-              isSeries: mediaType === "tv",
-              __detailHtml: result.text
-            }
-          };
-        }).catch(function() { return null; });
+  function tryIndex(index) {
+    if (index >= candidates.length) return Promise.resolve(null);
+
+    var url = candidates[index];
+    var timeoutMs = index === 0 ? 1400 : 700;
+
+    return requestText(
+      url,
+      { "Referer": trimSlash(cachedBaseUrl || baseUrl) + "/" },
+      timeoutMs
+    ).then(function(result) {
+      updateBaseFromUrl(result.url || url);
+
+      if (!isDirectPencuriMatch(result, info, mediaType)) {
+        return tryIndex(index + 1);
+      }
+
+      console.log(
+        "[PencuriMovie] direct permalink hit " + (result.url || url)
+      );
+
+      return {
+        title: info.title,
+        href: result.url || url,
+        year: info.year,
+        isSeries: mediaType === "tv",
+        __detailHtml: result.text
       };
-    }),
-    3,
-    3200
-  ).then(function(matches) {
-    matches = matches.filter(Boolean).sort(function(a, b) {
-      return a.index - b.index;
+    }).catch(function() {
+      return tryIndex(index + 1);
     });
-    if (!matches.length) return null;
-    console.log("[PencuriMovie] direct permalink hit " + matches[0].match.href);
-    return matches[0].match;
-  });
+  }
+
+  return tryIndex(0);
 }
 
 function searchSite(baseUrl, query) {
@@ -964,251 +561,48 @@ function searchSite(baseUrl, query) {
   });
 }
 
-
-function browsePencuriLanding(
-  baseUrl,
-  mediaType
-) {
-  var domain =
-    trimSlash(
-      cachedBaseUrl ||
-      baseUrl
-    );
-
-  var paths =
-    mediaType === "tv"
-      ? ["/", "/series/", "/tvshows/"]
-      : ["/", "/movies/"];
-
-  return collectValuesBounded(
-    paths.map(function(path) {
-      return function() {
-        var url =
-          domain +
-          path;
-
-        return requestText(
-          url,
-          {
-            "Referer":
-              domain +
-              "/"
-          },
-          2600
-        )
-          .then(function(result) {
-            updateBaseFromUrl(
-              result.url ||
-              url
-            );
-
-            return parseSearchResults(
-              result.text,
-              result.url ||
-              url
-            );
-          })
-          .catch(function() {
-            return [];
-          });
-      };
-    }),
-    2,
-    4200
-  ).then(function(groups) {
-    var merged = [];
-
-    groups.forEach(function(group) {
-      merged =
-        merged.concat(
-          Array.isArray(group)
-            ? group
-            : []
-        );
-    });
-
-    return merged;
-  });
-}
-
-
-function searchPencuriWordPress(baseUrl, query) {
-  var domain = trimSlash(cachedBaseUrl || baseUrl);
-  var url = domain + "/wp-json/wp/v2/search?per_page=20&type=post&search=" + encodeURIComponent(query);
-  return requestJson(url, { "Referer": domain + "/" }, 2200)
-    .then(function(payload) {
-      if (!Array.isArray(payload)) return [];
-      return payload.map(function(item, index) {
-        var href = String(item && item.url || "").trim();
-        var title = decodeHtml(String(item && item.title || "").replace(/<[^>]+>/g, " "));
-        if (!href || !title) return null;
-        return {
-          title: title.replace(/\s+/g, " ").trim(),
-          href: safeUrl(href, domain + "/"),
-          year: yearFrom(title),
-          isSeries: /\/(?:series|tvshows)\//i.test(href),
-          rank: index
-        };
-      }).filter(Boolean);
-    })
-    .catch(function() { return []; });
-}
-
 function findBestTitle(baseUrl, info, mediaType) {
-  return tryDirectPencuriPage(
-    baseUrl,
-    info,
-    mediaType
-  ).then(function(direct) {
+  return tryDirectPencuriPage(baseUrl, info, mediaType).then(function(direct) {
     if (direct) return direct;
 
-    console.log(
-      "[PencuriMovie] direct permalink miss, using discovery search"
-    );
+    console.log("[PencuriMovie] direct permalink miss, using site search");
 
-    var queries =
-      buildAliasQueries(
-        info,
-        8
-      );
-
-    return searchPencuriWordPress(
-      cachedBaseUrl || baseUrl,
-      queries[0] || info.title
-    ).then(function(wpItems) {
-      if (wpItems && wpItems.length) {
-        var ranked = wpItems.slice().sort(function(a, b) {
-          return scoreCandidate(b, info, mediaType) - scoreCandidate(a, info, mediaType);
-        });
-        var wpScore = ranked.length ? scoreCandidate(ranked[0], info, mediaType) : 0;
-        vueoCandidateTrace("WP_SEARCH", { count: ranked.length, title: ranked.length ? ranked[0].title : "", score: wpScore });
-        if (ranked.length && wpScore >= 44) return ranked[0];
-      }
-      return collectValuesBounded(
-      queries.map(function(query) {
-        return function() {
-          return searchSite(
-            cachedBaseUrl ||
-            baseUrl,
-            query
-          )
-            .catch(function() {
-              return [];
-            });
-        };
-      }),
-      3,
-      6200
-    );
-    }).then(function(searchValue) {
-      if (searchValue && !Array.isArray(searchValue)) return searchValue;
-      var groups = Array.isArray(searchValue) ? searchValue : [];
-      var seen =
-        Object.create(null);
-
-      var candidates = [];
-
-      groups.forEach(function(items) {
-        (
-          Array.isArray(items)
-            ? items
-            : []
-        ).forEach(function(item) {
-          if (
-            !item ||
-            !item.href ||
-            seen[item.href]
-          ) {
-            return;
-          }
-
-          seen[item.href] = true;
-          candidates.push(item);
-        });
+    return searchSite(baseUrl, info.title).then(function(items) {
+      items.sort(function(a, b) {
+        return scoreCandidate(b, info, mediaType) - scoreCandidate(a, info, mediaType);
       });
 
-      function choose(items) {
-        var list =
-          Array.isArray(items)
-            ? items.slice()
-            : [];
-
-        list.sort(function(a, b) {
-          return (
-            scoreCandidate(
-              b,
-              info,
-              mediaType
-            ) -
-            scoreCandidate(
-              a,
-              info,
-              mediaType
-            )
-          );
-        });
-
-        if (!list.length) {
-          return null;
-        }
-
-        var topScore =
-          scoreCandidate(
-            list[0],
-            info,
-            mediaType
-          );
-
-        vueoCandidateTrace("CANDIDATE", {
-          count: list.length,
-          title: list[0] ? list[0].title : "",
-          score: topScore
-        });
-
-        return topScore >= 44
-          ? list[0]
-          : null;
-      }
-
-      var best =
-        choose(candidates);
-
-      if (best) {
+      var best = items[0] || null;
+      if (best && scoreCandidate(best, info, mediaType) >= 30) {
         return best;
       }
 
-      return browsePencuriLanding(
-        baseUrl,
-        mediaType
-      ).then(function(landingItems) {
-        return choose(
-          candidates.concat(
-            Array.isArray(landingItems)
-              ? landingItems
-              : []
-          )
-        );
-      });
+      if (
+        !best &&
+        info.originalTitle &&
+        normalizeTitle(info.originalTitle) !== normalizeTitle(info.title)
+      ) {
+        return searchSite(
+          cachedBaseUrl || baseUrl,
+          info.originalTitle
+        ).then(function(extra) {
+          extra.sort(function(a, b) {
+            return scoreCandidate(b, info, mediaType) -
+              scoreCandidate(a, info, mediaType);
+          });
+          return extra[0] || null;
+        });
+      }
+
+      return best;
     });
   }).then(function(best) {
-    if (!best) {
-      throw new Error(
-        "No PencuriMovie title match"
-      );
-    }
+    if (!best) throw new Error("No PencuriMovie title match");
 
     if (!best.__detailHtml) {
-      var score =
-        scoreCandidate(
-          best,
-          info,
-          mediaType
-        );
-
-      if (score < 44) {
-        throw new Error(
-          "PencuriMovie match confidence too low"
-        );
+      var score = scoreCandidate(best, info, mediaType);
+      if (score < 24) {
+        throw new Error("PencuriMovie match confidence too low");
       }
     }
 
@@ -2148,7 +1542,7 @@ function extractVoe(url, referer) {
   });
 }
 
-function extractGenericHost(url, referer, depth, allowWebView) {
+function extractGenericHost(url, referer, depth) {
   return requestRaw(url, {
     headers: referer ? { "Referer": referer } : {},
     redirect: "follow"
@@ -2164,141 +1558,60 @@ function extractGenericHost(url, referer, depth, allowWebView) {
     var nested = extractIframes(result.text, result.url || url).slice(0, 2);
     if (!nested.length) return resolved;
 
-    return collectResolvedBounded(
-      nested.map(function(child) {
-        return function() {
-          return loadExtractorEquivalent(
-            child,
-            result.url || url,
-            Number(depth || 0) + 1,
-            allowWebView
-          ).catch(function() {
-            return emptyResolved();
-          });
-        };
-      }),
-      2,
-      1900
-    ).then(function(children) {
-      mergeResolved(
-        resolved,
-        children
-      );
+    return Promise.all(nested.map(function(child) {
+      return loadExtractorEquivalent(child, result.url || url, Number(depth || 0) + 1)
+        .catch(function() { return emptyResolved(); });
+    })).then(function(children) {
+      children.forEach(function(child) { mergeResolved(resolved, child); });
       return resolved;
     });
   });
 }
 
 
-function collectValuesBounded(
-  factories,
-  concurrency,
-  timeoutMs
-) {
-  var jobs =
-    Array.isArray(factories)
-      ? factories
-      : [];
-
-  if (!jobs.length) {
-    return Promise.resolve([]);
+function firstNonEmptyResolved(tasks, timeoutMs) {
+  if (!Array.isArray(tasks) || !tasks.length) {
+    return Promise.resolve(emptyResolved());
   }
 
-  var limit =
-    Math.max(
-      1,
-      Number(concurrency || 1)
-    );
-
   return new Promise(function(resolve) {
-    var output = [];
-    var next = 0;
-    var active = 0;
-    var done = false;
+    var pending = tasks.length;
+    var settled = false;
 
-    var timer =
-      setTimeout(
-        finish,
-        Math.max(
-          1,
-          Number(timeoutMs || 1)
-        )
-      );
-
-    function finish() {
-      if (done) return;
-      done = true;
-      clearTimeout(timer);
-      resolve(output);
+    function finish(value) {
+      if (settled) return;
+      settled = true;
+      resolve(value || emptyResolved());
     }
 
-    function pump() {
-      if (done) return;
+    tasks.forEach(function(task) {
+      Promise.resolve(task)
+        .then(function(value) {
+          var count =
+            value && Array.isArray(value.streams)
+              ? value.streams.length
+              : 0;
 
-      if (
-        next >= jobs.length &&
-        active === 0
-      ) {
-        finish();
-        return;
-      }
+          if (count > 0) {
+            finish(value);
+            return;
+          }
 
-      while (
-        !done &&
-        active < limit &&
-        next < jobs.length
-      ) {
-        var factory =
-          jobs[next++];
-
-        active += 1;
-
-        Promise.resolve()
-          .then(factory)
-          .then(function(value) {
-            if (
-              !done &&
-              value !== undefined &&
-              value !== null
-            ) {
-              output.push(value);
-            }
-          })
-          .catch(function() {})
-          .then(function() {
-            active -= 1;
-            pump();
-          });
-      }
-    }
-
-    pump();
-  });
-}
-
-function collectResolvedBounded(
-  factories,
-  concurrency,
-  timeoutMs
-) {
-  return collectValuesBounded(
-    factories,
-    concurrency,
-    timeoutMs
-  ).then(function(results) {
-    var merged =
-      emptyResolved();
-
-    results.forEach(function(result) {
-      mergeResolved(
-        merged,
-        result || emptyResolved()
-      );
+          pending -= 1;
+          if (pending <= 0) finish(emptyResolved());
+        })
+        .catch(function() {
+          pending -= 1;
+          if (pending <= 0) finish(emptyResolved());
+        });
     });
 
-    return merged;
+    setTimeout(function() {
+      finish(emptyResolved());
+    }, timeoutMs);
   });
 }
+
 
 function nativeWebViewAvailable() {
   return (
@@ -2371,7 +1684,7 @@ function resolveWithNativeWebView(url, referer, label) {
 
   return globalThis.webviewResolve(absolute, {
     referer: referer || absolute,
-    timeoutMs: 6500,
+    timeoutMs: 13000,
     finishAfterFirstMs: 600,
     clickDelaysMs: [
       650,
@@ -2379,7 +1692,9 @@ function resolveWithNativeWebView(url, referer, label) {
       2200,
       3400,
       5000,
-      6200
+      7000,
+      9500,
+      12000
     ],
     match: [
       "/sora/",
@@ -2478,7 +1793,7 @@ function extractorNameFor(url) {
   return "Generic";
 }
 
-function dispatchExtractor(url, referer, depth, allowWebView) {
+function dispatchExtractor(url, referer, depth) {
   var name = extractorNameFor(url);
   console.log("[PencuriMovie] extractor=" + name + " host=" + hostOf(url));
 
@@ -2492,10 +1807,8 @@ function dispatchExtractor(url, referer, depth, allowWebView) {
   else if (name === "Vidmoly") work = extractVidmoly(url, referer);
   else if (name === "LuluStream") work = extractLulu(url, referer);
   else if (name === "Voe") work = extractVoe(url, referer);
-  else if (name === "BrowserPlayer") work = allowWebView === false
-    ? emptyResolved()
-    : resolveWithNativeWebView(url, referer, "BrowserPlayer");
-  else work = extractGenericHost(url, referer, depth || 0, allowWebView);
+  else if (name === "BrowserPlayer") work = resolveWithNativeWebView(url, referer, "BrowserPlayer");
+  else work = extractGenericHost(url, referer, depth || 0);
 
   return Promise.resolve(work).then(function(resolved) {
     var streams = resolved && Array.isArray(resolved.streams) ? resolved.streams.length : 0;
@@ -2507,7 +1820,7 @@ function dispatchExtractor(url, referer, depth, allowWebView) {
      */
     if (streams) return resolved || emptyResolved();
 
-    return extractGenericHost(url, referer, 1, allowWebView)
+    return extractGenericHost(url, referer, 1)
       .catch(function() {
         return resolved || emptyResolved();
       })
@@ -2519,10 +1832,6 @@ function dispatchExtractor(url, referer, depth, allowWebView) {
 
         if (genericStreams) return genericResolved;
 
-        if (allowWebView === false) {
-          return genericResolved || resolved || emptyResolved();
-        }
-
         return resolveWithNativeWebView(
           url,
           referer,
@@ -2532,7 +1841,7 @@ function dispatchExtractor(url, referer, depth, allowWebView) {
   });
 }
 
-function loadExtractorEquivalent(url, referer, depth, allowWebView) {
+function loadExtractorEquivalent(url, referer, depth) {
   var absolute = safeUrl(url, referer);
   if (!absolute) return Promise.resolve(emptyResolved());
 
@@ -2550,12 +1859,6 @@ function loadExtractorEquivalent(url, referer, depth, allowWebView) {
 
   var directName = extractorNameFor(absolute);
   if (directName === "BrowserPlayer") {
-    if (allowWebView === false) {
-      return Promise.resolve(
-        emptyResolved()
-      );
-    }
-
     console.log("[PencuriMovie] native direct host=" + hostOf(absolute));
     return resolveWithNativeWebView(
       absolute,
@@ -2570,258 +1873,91 @@ function loadExtractorEquivalent(url, referer, depth, allowWebView) {
       "[PencuriMovie] iframe=" + hostOf(absolute) +
       (finalUrl !== absolute ? " redirect=" + hostOf(finalUrl) : "")
     );
-    return dispatchExtractor(finalUrl, referer || absolute, depth || 0, allowWebView);
+    return dispatchExtractor(finalUrl, referer || absolute, depth || 0);
   });
 }
 
-function resolveMovieplayFrames(
-  html,
-  pageUrl
-) {
-  var direct =
-    extractJwPlayerMedia(
-      html,
-      pageUrl
-    );
+function hostPriorityForPencuri(url) {
+  var host = hostOf(url).toLowerCase();
+  if (/playmogo|dood|streamtape|voe|vidhide|filemoon/.test(host)) return 0;
+  if (/hgcloud|hubcloud/.test(host)) return 1;
+  if (/abyss|browser|embed/.test(host)) return 9;
+  return 4;
+}
 
-  var resolved = {
-    streams:
-      direct.map(function(item) {
-        return {
-          url: item.url,
-          quality: item.quality,
-          referer: pageUrl,
-          headers: {
-            "Referer": pageUrl
-          },
-          serverLabel:
-            "Page"
-        };
+function resolvePencuriFramesFast(frames, pageUrl) {
+  var ordered = (frames || []).slice().sort(function(a, b) {
+    return hostPriorityForPencuri(a) - hostPriorityForPencuri(b);
+  });
+  var nativeFirst = ordered.filter(function(frame) {
+    return extractorNameFor(frame) !== "BrowserPlayer";
+  }).slice(0, 4);
+  var browserFallback = ordered.filter(function(frame) {
+    return extractorNameFor(frame) === "BrowserPlayer";
+  }).slice(0, 1);
+
+  if (nativeFirst.length) {
+    return firstNonEmptyResolved(
+      nativeFirst.map(function(frame) {
+        return loadExtractorEquivalent(frame, pageUrl, 0).catch(function() { return emptyResolved(); });
       }),
-    subtitles:
-      extractSubtitles(
-        html,
-        pageUrl
-      )
-  };
-
-  var frames =
-    extractMovieplayIframes(
-      html,
-      pageUrl
-    );
-
-  var seen = {};
-  frames =
-    frames.filter(function(frame) {
-      var value =
-        String(frame || "").trim();
-
-      if (
-        !value ||
-        seen[value]
-      ) {
-        return false;
+      6200
+    ).then(function(result) {
+      if (result && result.streams && result.streams.length) {
+        vueoTrace("EXTRACT_FAST", { host: hostOf(result.streams[0].url), streams: result.streams.length });
+        return result;
       }
-
-      seen[value] = true;
-      return true;
-    });
-
-  if (!frames.length) {
-    if (resolved.streams.length) {
-      return Promise.resolve(
-        resolved
+      if (!browserFallback.length) return result || emptyResolved();
+      return firstNonEmptyResolved(
+        browserFallback.map(function(frame) {
+          return loadExtractorEquivalent(frame, pageUrl, 0).catch(function() { return emptyResolved(); });
+        }),
+        6000
       );
-    }
-
-    throw new Error(
-      "PencuriMovie movieplay iframe not found"
-    );
+    });
   }
 
-  console.log(
-    "[PencuriMovie] movieplay iframes=" +
-    frames.length
+  return firstNonEmptyResolved(
+    browserFallback.map(function(frame) {
+      return loadExtractorEquivalent(frame, pageUrl, 0).catch(function() { return emptyResolved(); });
+    }),
+    6000
   );
+}
 
-  /*
-   * Every iframe is eligible. Standard HTTP extractors run first with bounded
-   * concurrency so one dead host cannot block the remaining servers.
-   */
-  return collectValuesBounded(
-    frames.map(function(frame) {
-      return function() {
-        return loadExtractorEquivalent(
-          frame,
-          pageUrl,
-          0,
-          false
-        )
-          .catch(function(error) {
-            console.log(
-              "[PencuriMovie] standard extractor failed host=" +
-              hostOf(frame) +
-              " error=" +
-              (
-                error &&
-                error.message
-                  ? error.message
-                  : String(error)
-              )
-            );
-
-            return emptyResolved();
-          })
-          .then(function(child) {
-            (child.streams || [])
-              .forEach(function(stream) {
-                if (!stream.serverLabel) {
-                  stream.serverLabel =
-                    extractorNameFor(frame);
-                }
-              });
-
-            return {
-              frame: frame,
-              resolved: child
-            };
-          });
+function resolveMovieplayFrames(html, pageUrl) {
+  var direct = extractJwPlayerMedia(html, pageUrl);
+  var resolved = {
+    streams: direct.map(function(item) {
+      return {
+        url: item.url,
+        quality: item.quality,
+        referer: pageUrl,
+        headers: { "Referer": pageUrl }
       };
     }),
-    3,
-    9200
-  ).then(function(results) {
-    var failedFrames = [];
+    subtitles: extractSubtitles(html, pageUrl)
+  };
 
-    results.forEach(function(entry) {
-      if (!entry) return;
+  if (resolved.streams.length) return Promise.resolve(resolved);
 
-      var child =
-        entry.resolved ||
-        emptyResolved();
+  var frames = extractMovieplayIframes(html, pageUrl);
+  if (!frames.length) {
+    throw new Error("PencuriMovie movieplay iframe not found");
+  }
 
-      mergeResolved(
-        resolved,
-        child
-      );
+  console.log("[PencuriMovie] movieplay iframes=" + frames.length);
 
-      if (
-        !child.streams ||
-        !child.streams.length
-      ) {
-        failedFrames.push(
-          entry.frame
-        );
-      }
-    });
-
-    /*
-     * Jobs that did not start before the standard-lane deadline also remain
-     * eligible for fallback.
-     */
-    var attempted = {};
-    results.forEach(function(entry) {
-      if (entry && entry.frame) {
-        attempted[entry.frame] = true;
-      }
-    });
-
-    frames.forEach(function(frame) {
-      if (!attempted[frame]) {
-        failedFrames.push(frame);
-      }
-    });
-
-    var fallbackSeen = {};
-    failedFrames =
-      failedFrames.filter(function(frame) {
-        if (
-          !frame ||
-          fallbackSeen[frame]
-        ) {
-          return false;
-        }
-
-        fallbackSeen[frame] = true;
-        return true;
-      });
-
-    console.log(
-      "[PencuriMovie] standard streams=" +
-      resolved.streams.length +
-      " fallback frames=" +
-      failedFrames.length
-    );
-
-    if (
-      !nativeWebViewAvailable() ||
-      !failedFrames.length
-    ) {
-      return resolved;
-    }
-
-    /*
-     * Native WebView is expensive. Only this fallback lane is capped.
-     * Prioritise browser-only hosts first, then unknown generic players.
-     */
-    failedFrames.sort(function(a, b) {
-      function score(url) {
-        var name =
-          extractorNameFor(url);
-
-        if (name === "BrowserPlayer") {
-          return 0;
-        }
-
-        if (name === "Generic") {
-          return 1;
-        }
-
-        return 2;
-      }
-
-      return score(a) - score(b);
-    });
-
-    var webViewFrames =
-      failedFrames.slice(0, 3);
-
-    return collectResolvedBounded(
-      webViewFrames.map(function(frame) {
-        return function() {
-          return loadExtractorEquivalent(
-            frame,
-            pageUrl,
-            0,
-            true
-          ).then(function(child) {
-            (child.streams || [])
-              .forEach(function(stream) {
-                if (!stream.serverLabel) {
-                  stream.serverLabel =
-                    extractorNameFor(frame);
-                }
-              });
-
-            return child;
-          }).catch(function() {
-            return emptyResolved();
-          });
-        };
-      }),
-      2,
-      6800
-    ).then(function(webResolved) {
-      mergeResolved(
-        resolved,
-        webResolved
-      );
-
-      return resolved;
-    });
+  /*
+   * Cloudstream calls loadExtractor for every iframe in div.movieplay.
+   * Run them in parallel so multiple servers do not multiply total latency.
+   */
+  return resolvePencuriFramesFast(frames, pageUrl).then(function(child) {
+    mergeResolved(resolved, child);
+    return resolved;
   });
 }
+
 function resolvePlaybackPage(pageUrl) {
   return requestText(pageUrl, {}, 1800).then(function(result) {
     updateBaseFromUrl(result.url);
@@ -2849,13 +1985,7 @@ function buildStreams(resolved, info, mediaType, season, episode) {
     return {
       name:
         PROVIDER_NAME +
-        (
-          source.serverLabel
-            ? " " + source.serverLabel
-            : sources.length > 1
-              ? " Server " + (index + 1)
-              : ""
-        ),
+        (sources.length > 1 ? " Server " + (index + 1) : ""),
       title: (info.title || PROVIDER_NAME) + episodeLabel,
       url: source.url,
       quality: source.quality || inferQuality(source.url, ""),
@@ -2949,7 +2079,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
       return streams;
     });
 
-  return withSoftTimeout(work, 19500, "PencuriMovie provider")
+  return withSoftTimeout(work, 16800, "PencuriMovie provider")
     .catch(function(error) {
       console.error(
         "[PencuriMovie] " +
