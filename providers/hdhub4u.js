@@ -6,6 +6,8 @@ const cheerio = require('cheerio-without-node-native');
 /* VUEO_SHARED_DISCOVERY_CONTEXT_V1 */
 /* VUEO_PROVIDER_REPAIR_V16 */
 /* VUEO_PROVIDER_REPAIR_V17 */
+/* VUEO_FAST_DISCOVERY_V1 */
+/* VUEO_DISCOVERY_REBUILD_V1 */
 function vueoTrace(stage, details) {
   try {
     if (typeof globalThis !== "undefined" && typeof globalThis.vueoTrace === "function") {
@@ -1130,7 +1132,7 @@ function getDownloadLinks(mediaUrl) {
  */
 function getTMDBDetails(tmdbId, mediaType) {
     const endpoint = mediaType === 'movie' ? 'movie' : 'tv';
-    const url = TMDB_BASE_URL + '/' + endpoint + '/' + tmdbId + '?api_key=' + TMDB_API_KEY + '&append_to_response=external_ids';
+    const url = TMDB_BASE_URL + '/' + endpoint + '/' + tmdbId + '?api_key=' + TMDB_API_KEY + '&append_to_response=alternative_titles,translations,external_ids';
     return vueoSharedTmdb(url, function() {
         return fetch(url).then(function(response) { return response.json(); });
     }).then(function(data) {
@@ -1140,7 +1142,8 @@ function getTMDBDetails(tmdbId, mediaType) {
         return {
             title: title,
             year: year,
-            imdbId: data.external_ids && data.external_ids.imdb_id ? data.external_ids.imdb_id : null
+            imdbId: data.external_ids && data.external_ids.imdb_id ? data.external_ids.imdb_id : null,
+            aliases: collectTmdbAliases(data, mediaType)
         };
     });
 }
@@ -1168,6 +1171,56 @@ function normalizeTitle(title) {
         // Remove special characters but keep alphanumeric and spaces
         .replace(/[^\w\s]/g, '')
         .trim();
+}
+
+
+/* VUEO_TITLE_PROFILE_V1 */
+function collectTmdbAliases(data, mediaType) {
+  var output = [];
+  var seen = Object.create(null);
+
+  function add(value, priority) {
+    var text = String(value || "").trim();
+    var key = normalizeTitle(text);
+    if (!text || !key || seen[key]) return;
+    seen[key] = true;
+    output.push({ title: text, priority: Number(priority || 0) });
+  }
+
+  add(data && (data.title || data.name), 100);
+  add(data && (data.original_title || data.original_name), 95);
+
+  var altRoot = data && data.alternative_titles;
+  var altItems = altRoot && Array.isArray(altRoot.titles)
+    ? altRoot.titles
+    : altRoot && Array.isArray(altRoot.results)
+      ? altRoot.results
+      : [];
+
+  altItems.forEach(function(item) {
+    if (!item) return;
+    var country = String(item.iso_3166_1 || "").toUpperCase();
+    var priority = country === "US" || country === "GB"
+      ? 86
+      : country === "MY" || country === "ID"
+        ? 82
+        : 72;
+    add(item.title || item.name, priority);
+  });
+
+  var translations = data && data.translations && Array.isArray(data.translations.translations)
+    ? data.translations.translations
+    : [];
+
+  translations.forEach(function(item) {
+    var row = item && item.data && typeof item.data === "object" ? item.data : {};
+    var lang = String(item && item.iso_639_1 || "").toLowerCase();
+    var priority = lang === "en" ? 88 : (lang === "ms" || lang === "id" ? 80 : 68);
+    add(row.title || row.name, priority);
+  });
+
+  output.sort(function(a, b) { return b.priority - a.priority; });
+  return output.map(function(item) { return item.title; }).slice(0, 12);
 }
 
 /**
@@ -1206,57 +1259,101 @@ function calculateTitleSimilarity(title1, title2) {
  * @param {number} season Season number for TV shows
  * @returns {Object|null} Best matching result
  */
+function cleanDiscoveryTitleHD(value) {
+    return normalizeTitle(
+        String(value || '')
+            .replace(/\[(?:[^\]]{0,140})\]/g, ' ')
+            .replace(/\b(?:19|20)\d{2}\b/g, ' ')
+            .replace(/\bseason\s*\d{1,2}\b/gi, ' ')
+            .replace(/\bs\d{1,2}\b/gi, ' ')
+            .replace(/\b(?:2160p|1080p|720p|480p|4k|web[- ]?dl|webrip|bluray|hevc|h26[45]|10bit|dual audio|full movie|full series|all episodes)\b/gi, ' ')
+    );
+}
+
+function bestAliasSimilarityHD(mediaInfo, candidateTitle) {
+    var aliases = mediaInfo && Array.isArray(mediaInfo.aliases) && mediaInfo.aliases.length
+        ? mediaInfo.aliases
+        : [mediaInfo && mediaInfo.title, mediaInfo && mediaInfo.originalTitle];
+    var best = 0;
+    var cleanCandidate = cleanDiscoveryTitleHD(candidateTitle);
+    aliases.forEach(function(alias) {
+        var cleanAlias = cleanDiscoveryTitleHD(alias);
+        best = Math.max(best, calculateTitleSimilarity(candidateTitle, alias));
+        if (cleanCandidate && cleanAlias) {
+            if (cleanCandidate === cleanAlias) best = Math.max(best, 1);
+            else if (cleanCandidate.indexOf(cleanAlias) !== -1 || cleanAlias.indexOf(cleanCandidate) !== -1) best = Math.max(best, 0.92);
+            else best = Math.max(best, calculateTitleSimilarity(cleanCandidate, cleanAlias));
+        }
+    });
+    return best;
+}
+
+function buildDiscoveryQueriesHD(mediaInfo, mediaType, season) {
+    var output = [];
+    var seen = Object.create(null);
+    var aliases = mediaInfo && Array.isArray(mediaInfo.aliases) && mediaInfo.aliases.length
+        ? mediaInfo.aliases
+        : [mediaInfo && mediaInfo.title, mediaInfo && mediaInfo.originalTitle];
+
+    function add(value) {
+        var text = String(value || '').trim();
+        var key = normalizeTitle(text);
+        if (!text || !key || seen[key]) return;
+        seen[key] = true;
+        output.push(text);
+    }
+
+    aliases.slice(0, 6).forEach(function(alias) {
+        add(alias);
+        if (mediaType === 'tv' && season) add(alias + ' season ' + season);
+        if (mediaInfo && mediaInfo.year) add(alias + ' ' + mediaInfo.year);
+    });
+
+    return output.slice(0, 8);
+}
+
 function findBestTitleMatch(mediaInfo, searchResults, mediaType, season) {
     if (!searchResults || searchResults.length === 0) return null;
+    var bestMatch = null;
+    var bestScore = -999;
 
-    let bestMatch = null;
-    let bestScore = 0;
-
-    for (const result of searchResults) {
-        let score = calculateTitleSimilarity(mediaInfo.title, result.title);
-
-        // Year matching bonus/penalty
+    searchResults.forEach(function(result) {
+        var score = bestAliasSimilarityHD(mediaInfo, result.title) * 100;
         if (mediaInfo.year && result.year) {
-            const yearDiff = Math.abs(mediaInfo.year - result.year);
-            if (yearDiff === 0) {
-                score += 0.2; // Exact year match bonus
-            } else if (yearDiff <= 1) {
-                score += 0.1; // Close year match bonus
-            } else if (yearDiff > 5) {
-                score -= 0.3; // Large year difference penalty
-            }
+            var diff = Math.abs(Number(mediaInfo.year) - Number(result.year));
+            if (diff === 0) score += 24;
+            else if (diff <= 1) score += 8;
+            else if (diff > 4) score -= 32;
         }
-
-        // TV show season matching
         if (mediaType === 'tv' && season) {
-            const titleLower = result.title.toLowerCase();
-            const hasSeason = titleLower.includes(`season ${season}`) ||
-                             titleLower.includes(`s${season}`) ||
-                             titleLower.includes(`season ${season.toString().padStart(2, '0')}`);
-            if (hasSeason) {
-                score += 0.3; // Season match bonus
-            } else {
-                score -= 0.2; // No season match penalty
+            var raw = String(result.title || '');
+            var seasonMatch = raw.match(/\bseason\s*(\d{1,2})\b/i) || raw.match(/\bs(\d{1,2})\b/i);
+            if (seasonMatch) {
+                if (Number(seasonMatch[1]) === Number(season)) score += 28;
+                else score -= 100;
             }
         }
-
-        // Prefer results with higher quality indicators
-        if (result.title.toLowerCase().includes('2160p') ||
-            result.title.toLowerCase().includes('4k')) {
-            score += 0.05;
-        }
-
-        if (score > bestScore && score > 0.3) { // Minimum threshold
+        if (score > bestScore) {
             bestScore = score;
             bestMatch = result;
         }
-    }
+    });
 
-    if (bestMatch) {
-        console.log(`[HDHub4u] Best title match: "${bestMatch.title}" (score: ${bestScore.toFixed(2)})`);
-    }
-
+    if (!bestMatch || bestScore < 55) return null;
+    vueoTrace('CANDIDATE', { count: searchResults.length, title: bestMatch.title || '', score: Math.round(bestScore) });
     return bestMatch;
+}
+
+function searchDiscoveryHD(mediaInfo, mediaType, season) {
+    var queries = buildDiscoveryQueriesHD(mediaInfo, mediaType, season);
+    function run(index) {
+        if (index >= queries.length) return Promise.resolve(null);
+        return search(queries[index]).then(function(results) {
+            var best = findBestTitleMatch(mediaInfo, results || [], mediaType, season);
+            return best || run(index + 1);
+        }).catch(function() { return run(index + 1); });
+    }
+    return run(0);
 }
 
 /**
@@ -1284,26 +1381,29 @@ function pageTitleHDHub(html) {
 
 function tryDirectHDHubPage(mediaInfo, mediaType, season) {
     return getCurrentDomain().then(function(domain) {
-        const slug = slugifyHDHub(mediaInfo.title);
-        if (!slug) return null;
+        const aliases = mediaInfo && Array.isArray(mediaInfo.aliases) && mediaInfo.aliases.length ? mediaInfo.aliases : [mediaInfo.title];
         const year = mediaInfo.year ? String(mediaInfo.year) : '';
         let paths = [];
-        if (mediaType === 'movie') {
-            if (year) {
-                paths = [
-                    '/' + slug + '-' + year + '-webrip-hindi-full-movie/',
-                    '/' + slug + '-' + year + '-hindi-webrip-full-movie/',
-                    '/' + slug + '-' + year + '-english-webrip-full-movie/',
-                    '/' + slug + '-' + year + '-webrip-full-movie/'
-                ];
+        aliases.slice(0, 3).forEach(function(alias) {
+            const slug = slugifyHDHub(alias);
+            if (!slug) return;
+            if (mediaType === 'movie') {
+                if (year) {
+                    paths.push(
+                        '/' + slug + '-' + year + '-webrip-hindi-full-movie/',
+                        '/' + slug + '-' + year + '-hindi-webrip-full-movie/',
+                        '/' + slug + '-' + year + '-english-webrip-full-movie/',
+                        '/' + slug + '-' + year + '-webrip-full-movie/'
+                    );
+                }
+            } else if (season) {
+                paths.push(
+                    '/' + slug + '-season-' + season + '-hindi-webrip-all-episodes/',
+                    '/' + slug + '-season-' + season + '-webrip-hindi-full-series/',
+                    '/' + slug + '-season-' + season + '-webrip-all-episodes/'
+                );
             }
-        } else if (season) {
-            paths = [
-                '/' + slug + '-season-' + season + '-hindi-webrip-all-episodes/',
-                '/' + slug + '-season-' + season + '-webrip-hindi-full-series/',
-                '/' + slug + '-season-' + season + '-webrip-all-episodes/'
-            ];
-        }
+        });
         function probe(index) {
             if (index >= paths.length) return Promise.resolve(null);
             const url = domain.replace(/\/+$/, '') + paths[index];
@@ -1336,20 +1436,11 @@ function getStreams(tmdbId, mediaType = 'movie', season = null, episode = null) 
 
         console.log(`[HDHub4u] TMDB Info: "${mediaInfo.title}" (${mediaInfo.year || 'N/A'})`);
 
-        const searchQuery = mediaType === 'tv' && season ? `${mediaInfo.title} season ${season}` : mediaInfo.title;
-        console.log(`[HDHub4u] Searching for: "${searchQuery}"`);
+        console.log(`[HDHub4u] Discovery title: "${mediaInfo.title}"`);
 
         return tryDirectHDHubPage(mediaInfo, mediaType, season).then(function(directHit) {
             if (directHit) return directHit;
-            return search(searchQuery).then(function(searchResults) {
-                if (!searchResults || searchResults.length === 0) return null;
-                const bestMatch = findBestTitleMatch(mediaInfo, searchResults, mediaType, season);
-                if (!bestMatch) return null;
-                const similarity = calculateTitleSimilarity(mediaInfo.title, bestMatch.title);
-                vueoTrace('CANDIDATE', { count: searchResults.length, title: bestMatch.title, score: Math.round(similarity * 100) });
-                if (similarity < 0.55) return null;
-                return bestMatch;
-            });
+            return searchDiscoveryHD(mediaInfo, mediaType, season);
         }).then(function(selectedMedia) {
             if (!selectedMedia) {
                 console.log('[HDHub4u] No confident match found');

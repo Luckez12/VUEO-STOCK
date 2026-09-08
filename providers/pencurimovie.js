@@ -3,6 +3,8 @@
 /* VUEO_SHARED_DISCOVERY_CONTEXT_V1 */
 /* VUEO_PROVIDER_REPAIR_V16 */
 /* VUEO_PROVIDER_REPAIR_V17 */
+/* VUEO_FAST_DISCOVERY_V1 */
+/* VUEO_DISCOVERY_REBUILD_V1 */
 function vueoTrace(stage, details) {
   try {
     if (typeof globalThis !== "undefined" && typeof globalThis.vueoTrace === "function") {
@@ -279,6 +281,56 @@ function titleScore(candidate, expected) {
   return Math.round((recall * 0.72 + precision * 0.28) * 72);
 }
 
+
+/* VUEO_TITLE_PROFILE_V1 */
+function collectTmdbAliases(data, mediaType) {
+  var output = [];
+  var seen = Object.create(null);
+
+  function add(value, priority) {
+    var text = String(value || "").trim();
+    var key = normalizeTitle(text);
+    if (!text || !key || seen[key]) return;
+    seen[key] = true;
+    output.push({ title: text, priority: Number(priority || 0) });
+  }
+
+  add(data && (data.title || data.name), 100);
+  add(data && (data.original_title || data.original_name), 95);
+
+  var altRoot = data && data.alternative_titles;
+  var altItems = altRoot && Array.isArray(altRoot.titles)
+    ? altRoot.titles
+    : altRoot && Array.isArray(altRoot.results)
+      ? altRoot.results
+      : [];
+
+  altItems.forEach(function(item) {
+    if (!item) return;
+    var country = String(item.iso_3166_1 || "").toUpperCase();
+    var priority = country === "US" || country === "GB"
+      ? 86
+      : country === "MY" || country === "ID"
+        ? 82
+        : 72;
+    add(item.title || item.name, priority);
+  });
+
+  var translations = data && data.translations && Array.isArray(data.translations.translations)
+    ? data.translations.translations
+    : [];
+
+  translations.forEach(function(item) {
+    var row = item && item.data && typeof item.data === "object" ? item.data : {};
+    var lang = String(item && item.iso_639_1 || "").toLowerCase();
+    var priority = lang === "en" ? 88 : (lang === "ms" || lang === "id" ? 80 : 68);
+    add(row.title || row.name, priority);
+  });
+
+  output.sort(function(a, b) { return b.priority - a.priority; });
+  return output.map(function(item) { return item.title; }).slice(0, 12);
+}
+
 function yearFrom(value) {
   var match = String(value || "").match(/\b(19|20)\d{2}\b/);
   return match ? match[0] : "";
@@ -288,7 +340,8 @@ function getTmdbInfo(tmdbId, mediaType) {
   var endpoint = mediaType === "movie" ? "movie" : "tv";
   var url =
     "https://api.themoviedb.org/3/" + endpoint + "/" + encodeURIComponent(tmdbId) +
-    "?api_key=" + TMDB_API_KEY;
+    "?api_key=" + TMDB_API_KEY +
+    "&append_to_response=alternative_titles,translations,external_ids";
 
   return vueoSharedTmdb(url, function() {
     return requestJson(url, { "Accept": "application/json" }, 1400);
@@ -297,7 +350,8 @@ function getTmdbInfo(tmdbId, mediaType) {
       tmdbId: String(tmdbId),
       title: String(data && (data.title || data.name) || ""),
       originalTitle: String(data && (data.original_title || data.original_name) || ""),
-      year: String(data && (data.release_date || data.first_air_date) || "").split("-")[0]
+      year: String(data && (data.release_date || data.first_air_date) || "").split("-")[0],
+      aliases: collectTmdbAliases(data, mediaType)
     };
   });
 }
@@ -358,10 +412,13 @@ function parseSearchResults(html, baseUrl) {
 }
 
 function scoreCandidate(item, info, mediaType) {
-  var score = Math.max(
-    titleScore(item.title, info.title),
-    titleScore(item.title, info.originalTitle)
-  );
+  var aliases = info && Array.isArray(info.aliases) && info.aliases.length
+    ? info.aliases
+    : [info && info.title, info && info.originalTitle];
+  var score = 0;
+  aliases.forEach(function(alias) {
+    score = Math.max(score, titleScore(item.title, alias));
+  });
 
   if (info.year && item.year && info.year === item.year) score += 28;
   if (mediaType === "tv" && item.isSeries) score += 24;
@@ -455,13 +512,9 @@ function isDirectPencuriMatch(result, info, mediaType) {
 }
 
 function buildPencuriDirectCandidates(baseUrl, info, mediaType) {
-  var titles = [info.title];
-  if (
-    info.originalTitle &&
-    normalizeTitle(info.originalTitle) !== normalizeTitle(info.title)
-  ) {
-    titles.push(info.originalTitle);
-  }
+  var titles = info && Array.isArray(info.aliases) && info.aliases.length
+    ? info.aliases.slice(0, 6)
+    : [info.title, info.originalTitle];
 
   var output = [];
   var seen = Object.create(null);
@@ -561,51 +614,58 @@ function searchSite(baseUrl, query) {
   });
 }
 
+function browsePencuriLanding(baseUrl, info, mediaType) {
+  var domain = trimSlash(cachedBaseUrl || baseUrl);
+  var paths = mediaType === "tv" ? ["/tvshows/", "/series/", "/"] : ["/movies/", "/"];
+
+  function run(index) {
+    if (index >= paths.length) return Promise.resolve(null);
+    var url = domain + paths[index];
+    return requestText(url, { "Referer": domain + "/" }, 1500).then(function(result) {
+      updateBaseFromUrl(result.url || url);
+      var items = parseSearchResults(result.text, result.url || url);
+      items.sort(function(a, b) { return scoreCandidate(b, info, mediaType) - scoreCandidate(a, info, mediaType); });
+      var best = items[0] || null;
+      if (best && scoreCandidate(best, info, mediaType) >= 45) {
+        vueoTrace("LANDING_MATCH", { title: best.title || "", score: scoreCandidate(best, info, mediaType) });
+        return best;
+      }
+      return run(index + 1);
+    }).catch(function() { return run(index + 1); });
+  }
+
+  return run(0);
+}
+
 function findBestTitle(baseUrl, info, mediaType) {
   return tryDirectPencuriPage(baseUrl, info, mediaType).then(function(direct) {
     if (direct) return direct;
 
     console.log("[PencuriMovie] direct permalink miss, using site search");
+    var queries = info && Array.isArray(info.aliases) && info.aliases.length
+      ? info.aliases.slice(0, 5)
+      : [info.title, info.originalTitle];
 
-    return searchSite(baseUrl, info.title).then(function(items) {
-      items.sort(function(a, b) {
-        return scoreCandidate(b, info, mediaType) - scoreCandidate(a, info, mediaType);
-      });
+    function run(index) {
+      if (index >= queries.length) return Promise.resolve(null);
+      var query = String(queries[index] || "").trim();
+      if (!query) return run(index + 1);
+      return searchSite(cachedBaseUrl || baseUrl, query).then(function(items) {
+        items.sort(function(a, b) { return scoreCandidate(b, info, mediaType) - scoreCandidate(a, info, mediaType); });
+        var best = items[0] || null;
+        if (best && scoreCandidate(best, info, mediaType) >= 45) return best;
+        return run(index + 1);
+      }).catch(function() { return run(index + 1); });
+    }
 
-      var best = items[0] || null;
-      if (best && scoreCandidate(best, info, mediaType) >= 30) {
-        return best;
-      }
-
-      if (
-        !best &&
-        info.originalTitle &&
-        normalizeTitle(info.originalTitle) !== normalizeTitle(info.title)
-      ) {
-        return searchSite(
-          cachedBaseUrl || baseUrl,
-          info.originalTitle
-        ).then(function(extra) {
-          extra.sort(function(a, b) {
-            return scoreCandidate(b, info, mediaType) -
-              scoreCandidate(a, info, mediaType);
-          });
-          return extra[0] || null;
-        });
-      }
-
-      return best;
+    return run(0).then(function(best) {
+      return best || browsePencuriLanding(cachedBaseUrl || baseUrl, info, mediaType);
     });
   }).then(function(best) {
     if (!best) throw new Error("No PencuriMovie title match");
-
-    if (!best.__detailHtml) {
-      var score = scoreCandidate(best, info, mediaType);
-      if (score < 24) {
-        throw new Error("PencuriMovie match confidence too low");
-      }
+    if (!best.__detailHtml && scoreCandidate(best, info, mediaType) < 40) {
+      throw new Error("PencuriMovie match confidence too low");
     }
-
     return best;
   });
 }

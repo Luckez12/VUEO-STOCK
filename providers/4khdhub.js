@@ -7,6 +7,9 @@ console.log('[4KHDHub] Using cheerio-without-node-native for DOM parsing');
 /* VUEO_SHARED_DISCOVERY_CONTEXT_V1 */
 /* VUEO_PROVIDER_REPAIR_V16 */
 /* VUEO_PROVIDER_REPAIR_V17 */
+/* VUEO_FAST_DISCOVERY_V1 */
+/* VUEO_DISCOVERY_REBUILD_V1 */
+/* FOURK_MEMORY_SCOPE_GUARD_V1 */
 function vueoTrace(stage, details) {
   try {
     if (typeof globalThis !== "undefined" && typeof globalThis.vueoTrace === "function") {
@@ -210,6 +213,103 @@ function normalizeTitle(title) {
     .trim();
 }
 
+
+/* VUEO_TITLE_PROFILE_V1 */
+function collectTmdbAliases(data, mediaType) {
+  var output = [];
+  var seen = Object.create(null);
+
+  function add(value, priority) {
+    var text = String(value || '').trim();
+    var key = normalizeTitle(text);
+    if (!text || !key || seen[key]) return;
+    seen[key] = true;
+    output.push({ title: text, priority: Number(priority || 0) });
+  }
+
+  add(data && (data.title || data.name), 100);
+  add(data && (data.original_title || data.original_name), 95);
+
+  var altRoot = data && data.alternative_titles;
+  var altItems = altRoot && Array.isArray(altRoot.titles)
+    ? altRoot.titles
+    : altRoot && Array.isArray(altRoot.results)
+      ? altRoot.results
+      : [];
+  altItems.forEach(function(item) {
+    if (!item) return;
+    var country = String(item.iso_3166_1 || '').toUpperCase();
+    var priority = country === 'US' || country === 'GB' ? 86 : (country === 'MY' || country === 'ID' ? 82 : 72);
+    add(item.title || item.name, priority);
+  });
+
+  var translations = data && data.translations && Array.isArray(data.translations.translations)
+    ? data.translations.translations
+    : [];
+  translations.forEach(function(item) {
+    var row = item && item.data && typeof item.data === 'object' ? item.data : {};
+    var lang = String(item && item.iso_639_1 || '').toLowerCase();
+    var priority = lang === 'en' ? 88 : (lang === 'ms' || lang === 'id' ? 80 : 68);
+    add(row.title || row.name, priority);
+  });
+
+  output.sort(function(a, b) { return b.priority - a.priority; });
+  return output.map(function(item) { return item.title; }).slice(0, 12);
+}
+
+function cleanDiscoveryTitle4K(value) {
+  return normalizeTitle(
+    String(value || '')
+      .replace(/\[(?:[^\]]{0,140})\]/g, ' ')
+      .replace(/\b(?:19|20)\d{2}\b/g, ' ')
+      .replace(/\bseason\s*\d{1,2}\b/gi, ' ')
+      .replace(/\bs\d{1,2}\b/gi, ' ')
+      .replace(/\b(?:2160p|1080p|720p|480p|4k|web[- ]?dl|webrip|bluray|hevc|h26[45]|10bit|dual audio|full movie|full series|all episodes)\b/gi, ' ')
+  );
+}
+
+function bestAliasSimilarity4K(candidate, info) {
+  var aliases = info && Array.isArray(info.aliases) && info.aliases.length
+    ? info.aliases
+    : [info && info.title, info && info.originalTitle];
+  var cleanCandidate = cleanDiscoveryTitle4K(candidate);
+  var best = 0;
+  aliases.forEach(function(alias) {
+    var cleanAlias = cleanDiscoveryTitle4K(alias);
+    best = Math.max(best, calculateSimilarity(candidate, alias));
+    if (cleanCandidate && cleanAlias) {
+      if (cleanCandidate === cleanAlias) best = Math.max(best, 1);
+      else if (cleanCandidate.indexOf(cleanAlias) !== -1 || cleanAlias.indexOf(cleanCandidate) !== -1) best = Math.max(best, 0.92);
+      else best = Math.max(best, calculateSimilarity(cleanCandidate, cleanAlias));
+    }
+  });
+  return best;
+}
+
+function buildDiscoveryQueries4K(info, mediaType, season) {
+  var output = [];
+  var seen = Object.create(null);
+  var aliases = info && Array.isArray(info.aliases) && info.aliases.length
+    ? info.aliases
+    : [info && info.title, info && info.originalTitle];
+
+  function add(value) {
+    var text = String(value || '').trim();
+    var key = normalizeTitle(text);
+    if (!text || !key || seen[key]) return;
+    seen[key] = true;
+    output.push(text);
+  }
+
+  aliases.slice(0, 6).forEach(function(alias) {
+    add(alias);
+    if (mediaType === 'tv' && season) add(alias + ' season ' + season);
+    if (info && info.year) add(alias + ' ' + info.year);
+  });
+
+  return output.slice(0, 8);
+}
+
 function calculateSimilarity(str1, str2) {
   var s1 = normalizeTitle(str1);
   var s2 = normalizeTitle(str2);
@@ -231,33 +331,32 @@ function calculateSimilarity(str1, str2) {
   return (maxLen - matrix[len1][len2]) / maxLen;
 }
 
-function findBestMatch(results, query, targetYear) {
+function findBestMatch(results, info, mediaType, season) {
   if (!results || results.length === 0) return null;
-  if (results.length === 1) return results[0];
-  var scored = results.map(function (r) {
-    var score = 0;
-    if (normalizeTitle(r.title) === normalizeTitle(query)) score += 100;
-    var sim = calculateSimilarity(r.title, query); score += sim * 50;
-    if (normalizeTitle(r.title).indexOf(normalizeTitle(query)) !== -1) score += 15; // quick containment bonus
-    var lengthDiff = Math.abs(r.title.length - query.length);
-    score += Math.max(0, 10 - lengthDiff / 5);
-    if (/(19|20)\d{2}/.test(r.title)) score += 5;
-
-    // Year awareness: prefer results matching TMDB year
+  var scored = results.map(function(r) {
+    var score = bestAliasSimilarity4K(r.title, info) * 100;
     var rYear = null;
-    try {
-      var yMatch = (r.year || '').toString().match(/(19|20)\d{2}/);
-      if (yMatch) rYear = parseInt(yMatch[0], 10);
-    } catch (e) { /* ignore */ }
-    var ty = parseInt(targetYear, 10);
-    if (ty && !isNaN(ty)) {
-      if (rYear === ty) score += 200; // strong boost for exact year match
-      else if (rYear && Math.abs(rYear - ty) <= 1) score += 30; // slight off-by-one boost
-      else if (rYear) score -= 100; // penalize clearly different year
+    var yMatch = String(r.year || r.title || '').match(/(19|20)\d{2}/);
+    if (yMatch) rYear = parseInt(yMatch[0], 10);
+    var targetYear = parseInt(info && info.year, 10);
+    if (targetYear && !isNaN(targetYear)) {
+      if (rYear === targetYear) score += 28;
+      else if (rYear && Math.abs(rYear - targetYear) <= 1) score += 8;
+      else if (rYear) score -= 34;
+    }
+
+    if (mediaType === 'tv' && season) {
+      var explicitSeason = String(r.title || '').match(/\bseason\s*(\d{1,2})\b/i) || String(r.title || '').match(/\bs(\d{1,2})\b/i);
+      if (explicitSeason) {
+        if (Number(explicitSeason[1]) === Number(season)) score += 26;
+        else score -= 120;
+      }
     }
     return { item: r, score: score };
   });
-  scored.sort(function (a, b) { return b.score - a.score; });
+  scored.sort(function(a, b) { return b.score - a.score; });
+  if (!scored.length || scored[0].score < 55) return null;
+  vueoTrace('CANDIDATE', { count: results.length, title: scored[0].item.title || '', score: Math.round(scored[0].score) });
   return scored[0].item;
 }
 
@@ -368,6 +467,50 @@ function getRedirectLinks(url) {
   }).catch(function () { return ''; });
 }
 
+function parse4KSearchCards(html, baseUrl) {
+  var $ = cheerio.load(String(html || ''));
+  var results = [];
+  var seen = Object.create(null);
+
+  function add(title, href, poster, year) {
+    title = String(title || '').trim();
+    href = String(href || '').trim();
+    if (!title || !href) return;
+    var absoluteUrl = href.indexOf('http') === 0 ? href : (baseUrl + (href.indexOf('/') === 0 ? '' : '/') + href);
+    if (seen[absoluteUrl]) return;
+    seen[absoluteUrl] = true;
+    results.push({ title: title, url: absoluteUrl, poster: poster || '', year: year || '' });
+  }
+
+  $('a').each(function(i, el) {
+    var $el = $(el);
+    add(
+      $el.find('h3.movie-card-title').text(),
+      $el.attr('href'),
+      $el.find('img').attr('src'),
+      $el.find('p.movie-card-meta').text()
+    );
+  });
+
+  $('div.card-grid a').each(function(i, el) {
+    var $el = $(el);
+    add($el.find('h3').text(), $el.attr('href'), $el.find('img').attr('src'), $el.text());
+  });
+
+  if (!results.length) {
+    $('a[href]').each(function(i, el) {
+      var $el = $(el);
+      var href = $el.attr('href') || '';
+      var title = $el.find('h2,h3').first().text() || $el.attr('title') || $el.text();
+      if (!title || !href) return;
+      if (!/movie|season|series|\/(?:19|20)\d{2}\//i.test(String(title) + ' ' + href)) return;
+      add(title, href, $el.find('img').attr('src'), $el.text());
+    });
+  }
+
+  return results;
+}
+
 // Search content
 function searchContent(query) {
   return getDomains().then(function (domains) {
@@ -375,52 +518,40 @@ function searchContent(query) {
     var baseUrl = domains['4khdhub'];
     var searchUrl = baseUrl + '/?s=' + encodeURIComponent(query);
     return makeRequest(searchUrl).then(function (res) { return res.text(); }).then(function (html) {
-      var $ = cheerio.load(html);
-      var results = [];
-      
-      // Primary parsing for new movie-card structure
-      $('a').each(function (i, el) {
-        var $el = $(el);
-        var title = $el.find('h3.movie-card-title').text().trim();
-        var href = $el.attr('href');
-        var poster = $el.find('img').attr('src') || '';
-        var year = $el.find('p.movie-card-meta').text().trim();
-        
-        if (title && href) {
-          var absoluteUrl = href.indexOf('http') === 0 ? href : (baseUrl + (href.indexOf('/') === 0 ? '' : '/') + href);
-          results.push({ title: title, url: absoluteUrl, poster: poster, year: year });
-        }
-      });
-      
-      // Fallback parsing for legacy card-grid structure
-      if (results.length === 0) {
-        $('div.card-grid a').each(function (i, el) {
-          var $el = $(el);
-          var title = $el.find('h3').text().trim();
-          var href = $el.attr('href');
-          var poster = $el.find('img').attr('src') || '';
-          if (title && href) {
-            var absoluteUrl = href.indexOf('http') === 0 ? href : (baseUrl + (href.indexOf('/') === 0 ? '' : '/') + href);
-            results.push({ title: title, url: absoluteUrl, poster: poster });
-          }
-        });
-      }
-      
-      // Final fallback for general anchors
-      if (results.length === 0) {
-        $('a[href]').each(function (i, el) {
-          var $el2 = $(el);
-          var h = $el2.attr('href') || '';
-          var t = ($el2.text() || '').trim();
-          if (t && h && /\/\d{4}\//.test(h)) {
-            var abs = h.indexOf('http') === 0 ? h : (baseUrl + (h.indexOf('/') === 0 ? '' : '/') + h);
-            results.push({ title: t, url: abs, poster: '' });
-          }
-        });
-      }
-      return results;
+      return parse4KSearchCards(html, baseUrl);
     });
   });
+}
+
+function extractCandidateUrlsFromHtml(html, baseUrl) {
+  var $ = cheerio.load(String(html || ''));
+  var output = [];
+  var seen = Object.create(null);
+  var selectors = [
+    'div.download-item a',
+    '.download-item a',
+    'a[href*="hubdrive"]',
+    'a[href*="hubcloud"]',
+    'a[href*="pixeldrain"]',
+    'a[href*="buzz"]',
+    'a[href*="10gbps"]',
+    'a[href*="drive"]',
+    'a.btn[href]'
+  ];
+  selectors.forEach(function(selector) {
+    $(selector).each(function(i, el) {
+      var href = String($(el).attr('href') || '').trim();
+      if (!href) return;
+      try { href = new URL(href, baseUrl).href; } catch (_) {}
+      var lower = href.toLowerCase();
+      if (/\/(?:privacy-policy|terms-conditions|sign|login|register)(?:\/|$)/i.test(lower)) return;
+      if (!/hubdrive|hubcloud|pixeldrain|buzz|10gbps|workers\.dev|r2\.dev|id=|download|s3|fsl|gamerxyt/i.test(lower)) return;
+      if (seen[href]) return;
+      seen[href] = true;
+      output.push(href);
+    });
+  });
+  return output.slice(0, 12);
 }
 
 // Load content page and collect download links (and episodes for TV)
@@ -436,31 +567,8 @@ function loadContent(url) {
     var trailer = $('#trailer-btn').attr('data-trailer-url') || '';
     var isMovie = tags.indexOf('Movies') !== -1;
 
-    // Collect all relevant links across multiple selectors (do not stop at first)
-    var hrefsSet = new Set();
-    var selectors = [
-      'div.download-item a',
-      '.download-item a',
-      'a[href*="hubdrive"]',
-      'a[href*="hubcloud"]',
-      'a[href*="pixeldrain"]',
-      'a[href*="buzz"]',
-      'a[href*="10gbps"]',
-      'a[href*="drive"]',
-      'a.btn[href]',
-      'a.btn',
-      'a[href]'
-    ];
-    for (var s = 0; s < selectors.length; s++) {
-      $(selectors[s]).each(function (i, el) {
-        var h = ($(el).attr('href') || '').trim();
-        if (!h) return;
-        // Keep only plausible download/intermediate links
-        var keep = /hubdrive|hubcloud|pixeldrain|buzz|10gbps|workers\.dev|r2\.dev|id=|download|s3|fsl/i.test(h);
-        if (keep) hrefsSet.add(h);
-      });
-    }
-    var hrefs = Array.from(hrefsSet);
+    // V17/V18: keep only extractor-worthy URLs; navigation links never enter the queue.
+    var hrefs = extractCandidateUrlsFromHtml(html, url);
 
     var content = { title: title, poster: poster, tags: tags, year: year, description: description, trailer: trailer, type: isMovie ? 'movie' : 'series' };
     if (isMovie) {
@@ -636,8 +744,9 @@ function extractHubCloudLinks(url, referer) {
         });
       }
 
-      // Iterate per card to capture per-quality sections
-      var tasks = [];
+      // Iterate per card to capture per-quality sections.
+      // FOURK_MEMORY_SCOPE_GUARD_V1: collect plain values first; start async work only after DOM traversal.
+      var taskSpecs = [];
       var cards = $$('.card');
       if (cards.length > 0) {
         cards.each(function (ci, card) {
@@ -656,13 +765,13 @@ function extractHubCloudLinks(url, referer) {
             link = toAbsolute(link, href);
             // Only consider plausible buttons
             if (!/(hubcloud|hubdrive|pixeldrain|buzz|10gbps|workers\.dev|r2\.dev|download|api\/file)/i.test(link) && text.toLowerCase().indexOf('download') === -1) return;
-            tasks.push(buildTask(text, link, headerDetails, size, quality));
+            taskSpecs.push({ text: text, link: link, headerDetails: headerDetails, size: size, quality: quality });
           });
         });
       }
 
       // Fallback: whole page buttons. V17: never feed navigation/privacy/sign links into extractors.
-      if (tasks.length === 0) {
+      if (taskSpecs.length === 0) {
         var buttons = $$.root().find('div.card-body h2 a.btn');
         if (buttons.length === 0) {
           var altSelectors = ['a.btn', '.btn', 'a[href]'];
@@ -685,12 +794,17 @@ function extractHubCloudLinks(url, referer) {
           if (/\/(?:privacy-policy|terms-conditions|sign|login|register)(?:\/|$)/i.test(lowerLink)) return;
           if (lowerLink === String(origin || '').toLowerCase() + '/' || lowerLink === String(href || '').toLowerCase()) return;
           if (!/(hubcloud|hubdrive|pixeldrain|buzz|10gbps|workers\.dev|r2\.dev|download|api\/file|gamerxyt)/i.test(lowerLink) && lowerText.indexOf('download') === -1) return;
-          tasks.push(buildTask(text, link, headerDetails, size, quality));
+          taskSpecs.push({ text: text, link: link, headerDetails: headerDetails, size: size, quality: quality });
         });
       }
 
-      if (tasks.length === 0) return [];
-      return Promise.all(tasks).then(function (arr) { return (arr || []).filter(function (x) { return !!x; }); });
+      if (taskSpecs.length === 0) return [];
+      var boundedSpecs = taskSpecs.slice(0, 10);
+      $ = null;
+      $$ = null;
+      return Promise.all(boundedSpecs.map(function(spec) {
+        return buildTask(spec.text, spec.link, spec.headerDetails, spec.size, spec.quality);
+      })).then(function (arr) { return (arr || []).filter(function (x) { return !!x; }); });
     });
   }).catch(function () { return []; });
 }
@@ -798,14 +912,14 @@ function extractStreamingLinks(downloadLinks) {
 
 // TMDB helper
 function getTMDBDetails(tmdbId, mediaType) {
-  var url = 'https://api.themoviedb.org/3/' + mediaType + '/' + tmdbId + '?api_key=' + TMDB_API_KEY;
+  var url = 'https://api.themoviedb.org/3/' + mediaType + '/' + tmdbId + '?api_key=' + TMDB_API_KEY + '&append_to_response=alternative_titles,translations,external_ids';
   return vueoSharedTmdb(url, function() {
     return makeRequest(url).then(function(res) { return res.json(); });
   }).then(function(data) {
     if (mediaType === 'movie') {
-      return { title: data.title, original_title: data.original_title, year: data.release_date ? data.release_date.split('-')[0] : null };
+      return { title: data.title, originalTitle: data.original_title, year: data.release_date ? data.release_date.split('-')[0] : null, aliases: collectTmdbAliases(data, mediaType) };
     }
-    return { title: data.name, original_title: data.original_name, year: data.first_air_date ? data.first_air_date.split('-')[0] : null };
+    return { title: data.name, originalTitle: data.original_name, year: data.first_air_date ? data.first_air_date.split('-')[0] : null, aliases: collectTmdbAliases(data, mediaType) };
   }).catch(function() { return null; });
 }
 
@@ -843,10 +957,17 @@ function getStreams(tmdbId, type, season, episode) {
   var tmdbType = (type === 'series' ? 'tv' : type);
   return getTMDBDetails(tmdbId, tmdbType).then(function (tmdb) {
     if (!tmdb || !tmdb.title) return [];
-    return searchContent(tmdb.title + (tmdb.year ? (' ' + tmdb.year) : '')).then(function (results) {
-      if (!results || results.length === 0) return [];
-      var best = findBestMatch(results, tmdb.title, tmdb.year) || results[0];
-      vueoTrace("CANDIDATE", { count: results.length, title: best && best.title || "", score: best ? 100 : 0 });
+    var queries = buildDiscoveryQueries4K(tmdb, tmdbType, season);
+    function findCandidate(index) {
+      if (index >= queries.length) return Promise.resolve(null);
+      return searchContent(queries[index]).then(function(results) {
+        var best = findBestMatch(results || [], tmdb, tmdbType, season);
+        return best || findCandidate(index + 1);
+      }).catch(function() { return findCandidate(index + 1); });
+    }
+
+    return findCandidate(0).then(function (best) {
+      if (!best) return [];
       return loadContent(best.url).then(function (content) {
         var downloadLinks = [];
         if (type === 'movie') {

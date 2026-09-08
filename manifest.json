@@ -1,6 +1,6 @@
 {
   "name": "VUEO Stock",
-  "version": "1.16.0",
+  "version": "1.17.1",
   "scrapers": [
     {
       "id": "kisskh",
@@ -66,7 +66,7 @@
       "id": "hdhub4u",
       "name": "HDHub4u",
       "description": "Movie and TV stream provider",
-      "version": "1.6.0",
+      "version": "1.6.1",
       "author": "Luckez",
       "supportedTypes": [
         "movie",
@@ -87,7 +87,7 @@
       "disabledPlatforms": [],
       "supportsExternalPlayer": true,
       "runtimeTimeoutMs": 20000,
-      "notes": "V16 Provider Repair: coalesced domain lookup, WordPress REST primary-title discovery, primary-first search, then bounded alias fallback. Low-confidence unrelated cards never enter extraction. V15 Shared Discovery Context: TMDB detail metadata is coalesced by VUEO core once per scan when the V15 runtime bridge is available; local TMDB fallback remains for older runtimes. V15 centralized trace hooks emit metadata/candidate/verification stages without changing source extraction. V15 Shared Discovery Context + centralized trace hooks. TMDB metadata is coalesced by VUEO core when available, with provider-local fallback retained. Candidate/verification stages emit lightweight diagnostics. Discovery Rebuild V1: raw TMDB title is searched before season/year variants; current and legacy result-card layouts are parsed; noisy release strings are normalized before scoring so valid title matches are not lost. Existing QuickJS recursion/parser hotfixes remain."
+      "notes": "V17.1 latest-merge repair: restores the repo-wide TMDB title profile and required fast/discovery-rebuild contracts that were lost when the targeted V17 files were overlaid onto an older provider baseline. V16 Provider Repair: coalesced domain lookup, WordPress REST primary-title discovery, primary-first search, then bounded alias fallback. Low-confidence unrelated cards never enter extraction. V15 Shared Discovery Context: TMDB detail metadata is coalesced by VUEO core once per scan when the V15 runtime bridge is available; local TMDB fallback remains for older runtimes. V15 centralized trace hooks emit metadata/candidate/verification stages without changing source extraction. V15 Shared Discovery Context + centralized trace hooks. TMDB metadata is coalesced by VUEO core when available, with provider-local fallback retained. Candidate/verification stages emit lightweight diagnostics. Discovery Rebuild V1: raw TMDB title is searched before season/year variants; current and legacy result-card layouts are parsed; noisy release strings are normalized before scoring so valid title matches are not lost. Existing QuickJS recursion/parser hotfixes remain."
     },
     {
       "id": "moviebox",
@@ -121,7 +121,7 @@
       "id": "4khdhub",
       "name": "4KHDHub",
       "description": "Movie and TV stream provider",
-      "version": "1.7.0",
+      "version": "1.7.1",
       "author": "Luckez",
       "supportedTypes": [
         "movie",
@@ -142,13 +142,13 @@
       "disabledPlatforms": [],
       "supportsExternalPlayer": true,
       "runtimeTimeoutMs": 20000,
-      "notes": "V16 Provider Repair: coalesced domain lookup, WordPress REST primary-title discovery, primary-first bounded fallback, and explicit wrong-season rejection before expensive host extraction. V15 Shared Discovery Context: TMDB detail metadata is coalesced by VUEO core once per scan when the V15 runtime bridge is available; local TMDB fallback remains for older runtimes. V15 centralized trace hooks emit metadata/candidate/verification stages without changing source extraction. V15 Shared Discovery Context + centralized trace hooks. TMDB metadata is coalesced by VUEO core when available, with provider-local fallback retained. Candidate/verification stages emit lightweight diagnostics. Discovery Rebuild V1: raw aliases are searched before year/season variants, current movie-card and legacy layouts are both parsed, and noisy release metadata is removed before title scoring. Existing memory-scope guard remains."
+      "notes": "V17.1 latest-merge repair: restores the repo-wide TMDB title profile and required fast/discovery-rebuild contracts that were lost when the targeted V17 files were overlaid onto an older provider baseline. V16 Provider Repair: coalesced domain lookup, WordPress REST primary-title discovery, primary-first bounded fallback, and explicit wrong-season rejection before expensive host extraction. V15 Shared Discovery Context: TMDB detail metadata is coalesced by VUEO core once per scan when the V15 runtime bridge is available; local TMDB fallback remains for older runtimes. V15 centralized trace hooks emit metadata/candidate/verification stages without changing source extraction. V15 Shared Discovery Context + centralized trace hooks. TMDB metadata is coalesced by VUEO core when available, with provider-local fallback retained. Candidate/verification stages emit lightweight diagnostics. Discovery Rebuild V1: raw aliases are searched before year/season variants, current movie-card and legacy layouts are both parsed, and noisy release metadata is removed before title scoring. Existing memory-scope guard remains."
     },
     {
       "id": "pencurimovie",
       "name": "PencuriMovie",
       "description": "Malaysia and Indonesia movie and TV streams with multi-server playback",
-      "version": "1.8.0",
+      "version": "1.8.1",
       "author": "Luckez",
       "supportedTypes": [
         "movie",
@@ -169,14 +169,14 @@
       ],
       "disabledPlatforms": [],
       "supportsExternalPlayer": true,
-      "notes": "V16 Provider Repair: supports both /series/ and /tvshows/ routes, probes WordPress REST search before HTML alias fan-out, and keeps landing-page discovery fallback. V15 Shared Discovery Context: TMDB detail metadata is coalesced by VUEO core once per scan when the V15 runtime bridge is available; local TMDB fallback remains for older runtimes. V15 centralized trace hooks emit metadata/candidate/verification stages without changing source extraction. V15 Shared Discovery Context + centralized trace hooks. TMDB metadata is coalesced by VUEO core when available, with provider-local fallback retained. Candidate/verification stages emit lightweight diagnostics. Discovery Rebuild V1: broader alias discovery, generic canonical title-anchor parsing, cleaned title scoring, and landing-page fallback before declaring a title missing. Existing multi-server extraction is unchanged.",
+      "notes": "V17.1 latest-merge repair: restores the repo-wide TMDB title profile and required fast/discovery-rebuild contracts that were lost when the targeted V17 files were overlaid onto an older provider baseline. V16 Provider Repair: supports both /series/ and /tvshows/ routes, probes WordPress REST search before HTML alias fan-out, and keeps landing-page discovery fallback. V15 Shared Discovery Context: TMDB detail metadata is coalesced by VUEO core once per scan when the V15 runtime bridge is available; local TMDB fallback remains for older runtimes. V15 centralized trace hooks emit metadata/candidate/verification stages without changing source extraction. V15 Shared Discovery Context + centralized trace hooks. TMDB metadata is coalesced by VUEO core when available, with provider-local fallback retained. Candidate/verification stages emit lightweight diagnostics. Discovery Rebuild V1: broader alias discovery, generic canonical title-anchor parsing, cleaned title scoring, and landing-page fallback before declaring a title missing. Existing multi-server extraction is unchanged.",
       "runtimeTimeoutMs": 20000
     },
     {
       "id": "msm21",
       "name": "MSM21",
       "description": "Malay subtitle movie and TV streams using Zeta player multi-server extraction",
-      "version": "1.7.0",
+      "version": "1.7.1",
       "author": "Luckez",
       "supportedTypes": [
         "movie",
@@ -197,7 +197,7 @@
       ],
       "disabledPlatforms": [],
       "supportsExternalPlayer": true,
-      "notes": "V16 Provider Repair: DNS-dead mirrors are remembered for the current execution so repeated PlayerX failures do not waste the remaining extractor budget; healthy mirrors such as Netu remain eligible. V15 Shared Discovery Context: TMDB detail metadata is coalesced by VUEO core once per scan when the V15 runtime bridge is available; local TMDB fallback remains for older runtimes. V15 centralized trace hooks emit metadata/candidate/verification stages without changing source extraction. V15 Shared Discovery Context + centralized trace hooks. TMDB metadata is coalesced by VUEO core when available, with provider-local fallback retained. Candidate/verification stages emit lightweight diagnostics. Discovery Rebuild V1: supports both legacy display-item and current ml-item/canonical archive cards, searches more TMDB aliases, cleans release noise before scoring, and falls back to the TV/movie archive before declaring a title missing.",
+      "notes": "V17.1 latest-merge repair: restores the repo-wide TMDB title profile and required fast/discovery-rebuild contracts that were lost when the targeted V17 files were overlaid onto an older provider baseline. V16 Provider Repair: DNS-dead mirrors are remembered for the current execution so repeated PlayerX failures do not waste the remaining extractor budget; healthy mirrors such as Netu remain eligible. V15 Shared Discovery Context: TMDB detail metadata is coalesced by VUEO core once per scan when the V15 runtime bridge is available; local TMDB fallback remains for older runtimes. V15 centralized trace hooks emit metadata/candidate/verification stages without changing source extraction. V15 Shared Discovery Context + centralized trace hooks. TMDB metadata is coalesced by VUEO core when available, with provider-local fallback retained. Candidate/verification stages emit lightweight diagnostics. Discovery Rebuild V1: supports both legacy display-item and current ml-item/canonical archive cards, searches more TMDB aliases, cleans release noise before scoring, and falls back to the TV/movie archive before declaring a title missing.",
       "runtimeTimeoutMs": 20000
     },
     {
