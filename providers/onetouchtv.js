@@ -42,6 +42,7 @@ var AES_INV_SBOX = (function() {
 })();
 var AES_RCON = [0x00,0x01,0x02,0x04,0x08,0x10,0x20,0x40,0x80,0x1b,0x36,0x6c,0xd8,0xab,0x4d,0x9a];
 
+/* VUEO_PROVIDER_REPAIR_V16 */
 /* VUEO_SHARED_DISCOVERY_CONTEXT_V1 */
 function vueoSharedTmdb(url, fallback) {
   if (
@@ -861,7 +862,18 @@ function findBestTitle(info, mediaType, season) {
 
   queries = queries.slice(0, 7);
 
-  return Promise.all(queries.map(function(query) { return searchOneTouch(query, 1); })).then(function(groups) {
+  return Promise.all(queries.map(function(query) {
+    return searchOneTouch(query, 1).catch(function(error) {
+      console.log("[OneTouchTV] search miss query=\"" + query + "\" error=" +
+        (error && error.message ? error.message : String(error)));
+      return [];
+    });
+  })).then(function(groups) {
+    vueoCandidateTrace("SEARCH", {
+      queries: queries.length,
+      groups: groups.length,
+      nonEmpty: groups.filter(function(group) { return Array.isArray(group) && group.length; }).length
+    });
     var seen = {};
     var candidates = [];
 

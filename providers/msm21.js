@@ -1,7 +1,9 @@
 "use strict";
 
 var PROVIDER_NAME = "MSM21";
+/* VUEO_PROVIDER_REPAIR_V16 */
 var BASE_URL = "https://pencurimoviesubmalay26.site";
+var DNS_DEAD_HOSTS = Object.create(null);
 var TMDB_API_KEY = "1c29a5198ee1854bd5eb45dbe8d17d92";
 var USER_AGENT =
   "Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 " +
@@ -2952,15 +2954,27 @@ function attachMirrorLabel(resolved, mirror) {
 }
 
 function resolveMirror(mirror, pageUrl, allowWebView) {
+  var mirrorHost = hostOf(mirror && mirror.url);
+  if (mirrorHost && DNS_DEAD_HOSTS[mirrorHost]) {
+    console.log("[MSM21] skipping DNS-dead host=" + mirrorHost);
+    return Promise.resolve({ streams: [], subtitles: [] });
+  }
+
   return loadExtractorEquivalent(mirror.url, pageUrl, 0, allowWebView)
     .then(function(resolved) {
       return attachMirrorLabel(resolved, mirror);
     })
     .catch(function(error) {
+      var message = error && error.message ? error.message : String(error);
+      var failedHost = hostOf(mirror.url);
+      if (failedHost && /(?:NXDOMAIN|unknown host|name or service not known|nodename nor servname)/i.test(message)) {
+        DNS_DEAD_HOSTS[failedHost] = true;
+        vueoCandidateTrace("HOST_DEAD", { host: failedHost, reason: "dns" });
+      }
       console.log(
         "[MSM21] extractor failed server=" + mirror.label +
-        " host=" + hostOf(mirror.url) +
-        " error=" + (error && error.message ? error.message : String(error))
+        " host=" + failedHost +
+        " error=" + message
       );
       return { streams: [], subtitles: [] };
     });

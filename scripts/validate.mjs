@@ -80,6 +80,10 @@ for (const scraper of manifest.scrapers) {
     fail(`${scraper.filename} is missing the V15 shared discovery context marker`);
   }
 
+  if (['onetouchtv', 'hdhub4u', 'moviebox', '4khdhub', 'pencurimovie', 'msm21'].includes(scraper.id) && !source.includes('VUEO_PROVIDER_REPAIR_V16')) {
+    fail(`${scraper.filename} is missing the V16 provider-repair marker`);
+  }
+
   if (!source.includes('VUEO_SHARED_DISCOVERY_CONTEXT_V1')) {
     fail(`${scraper.filename} is missing the V15 shared discovery context marker`);
   }

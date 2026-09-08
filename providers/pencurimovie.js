@@ -18,6 +18,7 @@ var DEFAULT_HEADERS = {
 var cachedBaseUrl = null;
 var cachedBaseUrlPromise = null;
 
+/* VUEO_PROVIDER_REPAIR_V16 */
 /* VUEO_SHARED_DISCOVERY_CONTEXT_V1 */
 function vueoSharedTmdb(url, fallback) {
   if (
@@ -832,8 +833,8 @@ function isDirectPencuriMatch(result, info, mediaType) {
     return false;
   }
 
-  if (mediaType === "tv" && lower.indexOf("/series/") === -1) return false;
-  if (mediaType === "movie" && lower.indexOf("/series/") !== -1) return false;
+  if (mediaType === "tv" && !/\/(?:series|tvshows)\//i.test(lower)) return false;
+  if (mediaType === "movie" && /\/(?:series|tvshows)\//i.test(lower)) return false;
 
   var slug = slugifyTitle(info.title);
   var pathSlug = "";
@@ -976,7 +977,7 @@ function browsePencuriLanding(
 
   var paths =
     mediaType === "tv"
-      ? ["/", "/series/"]
+      ? ["/", "/series/", "/tvshows/"]
       : ["/", "/movies/"];
 
   return collectValuesBounded(
@@ -1030,6 +1031,29 @@ function browsePencuriLanding(
   });
 }
 
+
+function searchPencuriWordPress(baseUrl, query) {
+  var domain = trimSlash(cachedBaseUrl || baseUrl);
+  var url = domain + "/wp-json/wp/v2/search?per_page=20&type=post&search=" + encodeURIComponent(query);
+  return requestJson(url, { "Referer": domain + "/" }, 2200)
+    .then(function(payload) {
+      if (!Array.isArray(payload)) return [];
+      return payload.map(function(item, index) {
+        var href = String(item && item.url || "").trim();
+        var title = decodeHtml(String(item && item.title || "").replace(/<[^>]+>/g, " "));
+        if (!href || !title) return null;
+        return {
+          title: title.replace(/\s+/g, " ").trim(),
+          href: safeUrl(href, domain + "/"),
+          year: yearFrom(title),
+          isSeries: /\/(?:series|tvshows)\//i.test(href),
+          rank: index
+        };
+      }).filter(Boolean);
+    })
+    .catch(function() { return []; });
+}
+
 function findBestTitle(baseUrl, info, mediaType) {
   return tryDirectPencuriPage(
     baseUrl,
@@ -1048,7 +1072,19 @@ function findBestTitle(baseUrl, info, mediaType) {
         8
       );
 
-    return collectValuesBounded(
+    return searchPencuriWordPress(
+      cachedBaseUrl || baseUrl,
+      queries[0] || info.title
+    ).then(function(wpItems) {
+      if (wpItems && wpItems.length) {
+        var ranked = wpItems.slice().sort(function(a, b) {
+          return scoreCandidate(b, info, mediaType) - scoreCandidate(a, info, mediaType);
+        });
+        var wpScore = ranked.length ? scoreCandidate(ranked[0], info, mediaType) : 0;
+        vueoCandidateTrace("WP_SEARCH", { count: ranked.length, title: ranked.length ? ranked[0].title : "", score: wpScore });
+        if (ranked.length && wpScore >= 44) return ranked[0];
+      }
+      return collectValuesBounded(
       queries.map(function(query) {
         return function() {
           return searchSite(
@@ -1062,8 +1098,11 @@ function findBestTitle(baseUrl, info, mediaType) {
         };
       }),
       3,
-      7600
-    ).then(function(groups) {
+      6200
+    );
+    }).then(function(searchValue) {
+      if (searchValue && !Array.isArray(searchValue)) return searchValue;
+      var groups = Array.isArray(searchValue) ? searchValue : [];
       var seen =
         Object.create(null);
 

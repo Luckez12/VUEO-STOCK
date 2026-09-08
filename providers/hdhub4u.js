@@ -1,6 +1,7 @@
 // HDHub4u Scraper for Nuvio Local Scrapers
 // React Native compatible version with full original functionality
 // HDHUB4U_QUICKJS_ES2019_COMPAT_V1
+// VUEO_PROVIDER_REPAIR_V16
 
 const cheerio = require('cheerio-without-node-native');
 
@@ -16,6 +17,7 @@ const REQUEST_TIMEOUT_MS = 4500;
 const PROVIDER_BUDGET_MS = 19000;
 // VUEO_FAST_DISCOVERY_V1: all aliases searched concurrently; weak results never enter expensive extraction.
 let domainCacheTimestamp = 0;
+let domainFetchInFlight = null;
 
 const HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0",
@@ -504,30 +506,34 @@ function fetchAndUpdateDomain() {
     if (now - domainCacheTimestamp < DOMAIN_CACHE_TTL) {
         return Promise.resolve();
     }
+    if (domainFetchInFlight) return domainFetchInFlight;
 
     console.log('[HDHub4u] Fetching latest domain...');
-    return fetchWithTimeout(DOMAINS_URL, {
+    domainFetchInFlight = fetchWithTimeout(DOMAINS_URL, {
         method: 'GET',
         headers: {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         }
     }).then(function(response) {
-        if (response.ok) {
-            return response.json().then(function(data) {
-                if (data && data.HDHUB4u) {
-                    const newDomain = data.HDHUB4u;
-                    if (newDomain !== MAIN_URL) {
-                        console.log(`[HDHub4u] Updating domain from ${MAIN_URL} to ${newDomain}`);
-                        MAIN_URL = newDomain;
-                        HEADERS.Referer = `${MAIN_URL}/`;
-                        domainCacheTimestamp = now;
-                    }
-                }
-            });
+        if (!response.ok) return null;
+        return response.json();
+    }).then(function(data) {
+        if (data && data.HDHUB4u) {
+            const newDomain = data.HDHUB4u;
+            if (newDomain !== MAIN_URL) {
+                console.log(`[HDHub4u] Updating domain from ${MAIN_URL} to ${newDomain}`);
+                MAIN_URL = newDomain;
+                HEADERS.Referer = `${MAIN_URL}/`;
+            }
         }
+        domainCacheTimestamp = Date.now();
     }).catch(function(error) {
         console.error(`[HDHub4u] Failed to fetch latest domains: ${error.message}`);
+    }).then(function() {
+        domainFetchInFlight = null;
     });
+
+    return domainFetchInFlight;
 }
 
 /**
@@ -1889,6 +1895,27 @@ function buildDiscoveryQueriesHD(mediaInfo, mediaType, season) {
  * @param {number} season Season number for TV shows
  * @returns {Object|null} Best matching result
  */
+function searchWordPressHD(query) {
+    return getCurrentDomain().then(function(currentDomain) {
+        const url = currentDomain + '/wp-json/wp/v2/search?per_page=20&type=post&search=' + encodeURIComponent(query);
+        return fetchWithTimeout(url, { headers: HEADERS }, 2400)
+            .then(function(response) {
+                if (!response.ok) return [];
+                return response.json();
+            })
+            .then(function(items) {
+                if (!Array.isArray(items)) return [];
+                return items.map(function(item) {
+                    const title = String(item && item.title || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+                    const href = String(item && item.url || '').trim();
+                    if (!title || !href) return null;
+                    return { title: title, url: href, poster: '', year: null };
+                }).filter(Boolean);
+            })
+            .catch(function() { return []; });
+    });
+}
+
 function findBestTitleMatch(mediaInfo, searchResults, mediaType, season) {
     if (!searchResults || searchResults.length === 0) return null;
 
@@ -2057,18 +2084,29 @@ function getStreams(
                     '"'
                 );
 
-                return collectValuesBounded(
-                    queries.map(function(query) {
-                        return function() {
-                            return search(query)
-                                .catch(function() {
-                                    return [];
-                                });
-                        };
-                    }),
-                    4,
-                    8200
-                );
+                const primary = queries[0] || mediaInfo.title;
+                return Promise.all([
+                    searchWordPressHD(primary),
+                    search(primary).catch(function() { return []; })
+                ]).then(function(primaryGroups) {
+                    const primaryMerged = flattenUniqueLinks(primaryGroups.map(function(group) {
+                        return (Array.isArray(group) ? group : []).map(function(item) {
+                            return { url: item.url, title: item.title, poster: item.poster, year: item.year };
+                        });
+                    }));
+                    const primaryBest = findBestTitleMatch(mediaInfo, primaryMerged, type, requestedSeason);
+                    if (primaryBest) return [[primaryBest]];
+
+                    return collectValuesBounded(
+                        queries.slice(1, 6).map(function(query) {
+                            return function() {
+                                return search(query).catch(function() { return []; });
+                            };
+                        }),
+                        3,
+                        5200
+                    );
+                });
             })
             .then(function(groups) {
                 const seen = new Set();

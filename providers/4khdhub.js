@@ -1,6 +1,7 @@
 // 4KHDHub Scraper for Nuvio Local Scrapers
 // React Native compatible – no Node core modules, no async/await
 // FOURK_MEMORY_SCOPE_GUARD_V1
+// VUEO_PROVIDER_REPAIR_V16
 
 const cheerio = require('cheerio-without-node-native');
 console.log('[4KHDHub] Using cheerio-without-node-native for DOM parsing');
@@ -19,6 +20,7 @@ const URL_VALIDATION_ENABLED = false;
 
 // Caches (in-memory only)
 let domainsCache = null;
+let domainsInFlight = null;
 let resolvedUrlsCache = {}; // key -> array of resolved file-host URLs
 
 // Headers
@@ -758,6 +760,18 @@ function findBestMatch(
           mediaType === 'tv' &&
           requestedSeason
         ) {
+          var explicitSeason =
+            rawTitle.match(/\bseason\s*(\d{1,2})\b/i) ||
+            rawTitle.match(/\bs(\d{1,2})\b/i);
+
+          if (explicitSeason) {
+            if (Number(explicitSeason[1]) === Number(requestedSeason)) {
+              score += 25;
+            } else {
+              score -= 120;
+            }
+          }
+
           var exactSeason =
             new RegExp(
               '\\\\bS0*' +
@@ -880,37 +894,30 @@ function getFilenameFromUrl(url) {
 // Domains
 function getDomains() {
   if (domainsCache) return Promise.resolve(domainsCache);
+  if (domainsInFlight) return domainsInFlight;
 
-  return makeRequest(
+  domainsInFlight = makeRequest(
     DOMAINS_URL,
     { timeoutMs: 2800 }
   )
-    .then(function (res) {
-      return res.json();
-    })
+    .then(function (res) { return res.json(); })
     .then(function (data) {
-      var value =
-        data &&
-        String(data['4khdhub'] || '').trim();
-
-      domainsCache =
-        Object.assign(
-          {},
-          data || {},
-          {
-            '4khdhub':
-              value || FALLBACK_4KHDHUB_URL
-          }
-        );
-
+      var value = data && String(data['4khdhub'] || '').trim();
+      domainsCache = Object.assign({}, data || {}, {
+        '4khdhub': value || FALLBACK_4KHDHUB_URL
+      });
       return domainsCache;
     })
     .catch(function () {
-      domainsCache = {
-        '4khdhub': FALLBACK_4KHDHUB_URL
-      };
+      domainsCache = { '4khdhub': FALLBACK_4KHDHUB_URL };
       return domainsCache;
+    })
+    .then(function(value) {
+      domainsInFlight = null;
+      return value;
     });
+
+  return domainsInFlight;
 }
 
 // Resolve redirect link style used by 4KHDHub
@@ -1097,6 +1104,25 @@ function parse4KSearchCards(
   });
 
   return results;
+}
+
+function searchWordPress4K(query) {
+  return getDomains().then(function(domains) {
+    var baseUrl = domains && domains['4khdhub'] ? domains['4khdhub'] : FALLBACK_4KHDHUB_URL;
+    var url = baseUrl + '/wp-json/wp/v2/search?per_page=20&type=post&search=' + encodeURIComponent(query);
+    return makeRequest(url, { timeoutMs: 2400 })
+      .then(function(res) { if (!res.ok) return []; return res.json(); })
+      .then(function(items) {
+        if (!Array.isArray(items)) return [];
+        return items.map(function(item) {
+          var title = String(item && item.title || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+          var href = String(item && item.url || '').trim();
+          if (!title || !href) return null;
+          return { title: title, url: href, poster: '', year: title };
+        }).filter(Boolean);
+      })
+      .catch(function() { return []; });
+  });
 }
 
 function searchContent(query) {
@@ -2045,18 +2071,33 @@ function getStreams(
         '"'
       );
 
-      return collectValuesBounded(
-        queries.map(function (query) {
-          return function () {
-            return searchContent(query)
-              .catch(function () {
-                return [];
-              });
-          };
-        }),
-        4,
-        8200
-      ).then(function (groups) {
+      var primary = queries[0] || tmdb.title;
+      return Promise.all([
+        searchWordPress4K(primary),
+        searchContent(primary).catch(function() { return []; })
+      ]).then(function(primaryGroups) {
+        var primaryResults = [];
+        var primarySeen = {};
+        primaryGroups.forEach(function(group) {
+          (Array.isArray(group) ? group : []).forEach(function(item) {
+            if (!item || !item.url || primarySeen[item.url]) return;
+            primarySeen[item.url] = true;
+            primaryResults.push(item);
+          });
+        });
+        var primaryBest = findBestMatch(primaryResults, tmdb.title, tmdb.year, type, tmdb.aliases, requestedSeason);
+        if (primaryBest) return [[primaryBest]];
+
+        return collectValuesBounded(
+          queries.slice(1, 6).map(function (query) {
+            return function () {
+              return searchContent(query).catch(function () { return []; });
+            };
+          }),
+          3,
+          5200
+        );
+      }).then(function (groups) {
         var resultSeen = {};
         var results = [];
 

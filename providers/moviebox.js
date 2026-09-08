@@ -1,5 +1,7 @@
 "use strict";
 
+/* VUEO_PROVIDER_REPAIR_V16 */
+
 var PROVIDER_NAME = "MovieBox";
 var TMDB_API_KEY = "1c29a5198ee1854bd5eb45dbe8d17d92";
 
@@ -31,6 +33,7 @@ var PLAY_COLLECT_MS = 5600;
 var CAPTION_COLLECT_MS = 3400;
 
 var preferredWebHost = null;
+var unhealthyWebHosts = Object.create(null);
 
 /* VUEO_SHARED_DISCOVERY_CONTEXT_V1 */
 function vueoSharedTmdb(url, fallback) {
@@ -663,19 +666,31 @@ function typeMatches(item, mediaType) {
 }
 
 function extractSearchItems(payload) {
-  var data =
-    payload &&
-    payload.data &&
-    typeof payload.data === "object"
-      ? payload.data
-      : {};
+  var queue = [payload];
+  var seen = [];
+  var depth = 0;
 
-  if (Array.isArray(data.items)) {
-    return data.items;
-  }
+  while (queue.length && depth < 24) {
+    var value = queue.shift();
+    depth += 1;
+    if (!value || typeof value !== "object") continue;
+    if (seen.indexOf(value) !== -1) continue;
+    seen.push(value);
 
-  if (Array.isArray(data.subjectList)) {
-    return data.subjectList;
+    if (Array.isArray(value)) {
+      if (value.length && value.some(function(item) {
+        return item && typeof item === "object" &&
+          (item.subjectId || item.subject_id || item.title || item.name);
+      })) return value;
+      value.forEach(function(item) { if (item && typeof item === "object") queue.push(item); });
+      continue;
+    }
+
+    ["items", "subjectList", "subjects", "list", "results", "records", "content"].forEach(function(key) {
+      if (value[key] && typeof value[key] === "object") queue.push(value[key]);
+    });
+    if (value.data && typeof value.data === "object") queue.push(value.data);
+    if (value.result && typeof value.result === "object") queue.push(value.result);
   }
 
   return [];
@@ -739,7 +754,10 @@ function orderedHosts(seedHost) {
   add(seedHost);
   add(preferredWebHost);
 
-  WEB_HOSTS.forEach(add);
+  WEB_HOSTS.forEach(function(host) {
+    var normalized = String(host || "").replace(/\/+$/, "");
+    if (!unhealthyWebHosts[normalized]) add(host);
+  });
 
   return output;
 }
@@ -768,10 +786,20 @@ function searchHost(host, query) {
     3800,
     "MovieBox search " + host
   ).then(function(payload) {
+    var normalizedHost = String(host || "").replace(/\/+$/, "");
+    delete unhealthyWebHosts[normalizedHost];
     return {
       host: host,
       items: extractSearchItems(payload)
     };
+  }).catch(function(error) {
+    var normalizedHost = String(host || "").replace(/\/+$/, "");
+    unhealthyWebHosts[normalizedHost] = true;
+    vueoCandidateTrace("HOST_DEAD", {
+      host: normalizedHost,
+      error: error && error.message ? error.message : String(error)
+    });
+    throw error;
   });
 }
 
@@ -800,11 +828,13 @@ function chooseAcrossMirrors(
         function(item, index) {
           if (
             !item ||
-            !item.subjectId
+            !(item.subjectId || item.subject_id || item.id)
           ) {
             return;
           }
 
+          if (!item.subjectId) item.subjectId = item.subject_id || item.id;
+          if (!item.title) item.title = item.name || item.subjectName || item.subject_name || "";
           candidates.push({
             host: result.host,
             item: item,
@@ -888,7 +918,7 @@ function searchH5(
 
     var fallbackQueries =
       queries
-        .slice(1, 7);
+        .slice(1, 4);
 
     if (!fallbackQueries.length) {
       return null;
