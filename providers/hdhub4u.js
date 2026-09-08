@@ -27,6 +27,51 @@ const HEADERS = {
 // UTILITY FUNCTIONS (from Utils.kt)
 // =================================================================================
 
+/* VUEO_SHARED_DISCOVERY_CONTEXT_V1 */
+function vueoSharedTmdb(url, fallback) {
+  if (
+    typeof globalThis !== "undefined" &&
+    typeof globalThis.vueoDiscoveryContext === "function"
+  ) {
+    return globalThis.vueoDiscoveryContext(url)
+      .then(function(context) {
+        if (context && context.tmdb) {
+          if (typeof globalThis.vueoTrace === "function") {
+            globalThis.vueoTrace("METADATA", {
+              shared: true,
+              title: context.title || "",
+              year: context.year || "",
+              imdbId: context.imdbId || "",
+              aliases: Array.isArray(context.aliases) ? context.aliases.length : 0
+            });
+          }
+          return context.tmdb;
+        }
+        throw new Error("Shared discovery context is empty");
+      })
+      .catch(function(error) {
+        if (typeof globalThis.vueoTrace === "function") {
+          globalThis.vueoTrace("METADATA_FALLBACK", {
+            reason: error && error.message ? error.message : String(error)
+          });
+        }
+        return fallback();
+      });
+  }
+  return fallback();
+}
+
+function vueoCandidateTrace(stage, details) {
+  try {
+    if (
+      typeof globalThis !== "undefined" &&
+      typeof globalThis.vueoTrace === "function"
+    ) {
+      globalThis.vueoTrace(stage, details || {});
+    }
+  } catch (_) {}
+}
+
 function withSoftTimeout(promise, timeoutMs, label) {
     return new Promise(function(resolve, reject) {
         let settled = false;
@@ -1540,18 +1585,23 @@ function getTMDBDetails(tmdbId, mediaType) {
     const endpoint = mediaType === 'tv' ? 'tv' : 'movie';
     const url = `${TMDB_BASE_URL}/${endpoint}/${tmdbId}?api_key=${TMDB_API_KEY}&append_to_response=alternative_titles,translations,external_ids`;
 
-    return fetchWithTimeout(url, {
-        method: 'GET',
-        headers: {
-            'Accept': 'application/json',
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+    return vueoSharedTmdb(
+        url,
+        function() {
+            return fetchWithTimeout(url, {
+                method: 'GET',
+                headers: {
+                    'Accept': 'application/json',
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                }
+            }).then(function(response) {
+                if (!response.ok) {
+                    throw new Error(`TMDB API error: ${response.status}`);
+                }
+                return response.json();
+            });
         }
-    }).then(function(response) {
-        if (!response.ok) {
-            throw new Error(`TMDB API error: ${response.status}`);
-        }
-        return response.json();
-    }).then(function(data) {
+    ).then(function(data) {
         const title = mediaType === 'tv' ? data.name : data.title;
         const releaseDate = mediaType === 'tv' ? data.first_air_date : data.release_date;
         const year = releaseDate ? parseInt(releaseDate.split('-')[0]) : null;
@@ -1921,6 +1971,12 @@ function findBestTitleMatch(mediaInfo, searchResults, mediaType, season) {
             bestMatch = result;
         }
     }
+
+    vueoCandidateTrace("CANDIDATE", {
+        count: searchResults.length,
+        title: bestMatch ? bestMatch.title : "",
+        score: bestScore
+    });
 
     if (bestMatch && bestScore >= 44) {
         console.log(

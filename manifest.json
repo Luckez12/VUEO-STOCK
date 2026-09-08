@@ -1,12 +1,12 @@
 {
   "name": "VUEO Stock",
-  "version": "1.14.0",
+  "version": "1.15.0",
   "scrapers": [
     {
       "id": "kisskh",
       "name": "KissKH",
       "description": "Asian drama, series and movie streams with subtitle metadata",
-      "version": "1.2.1",
+      "version": "1.3.0",
       "author": "Luckez",
       "supportedTypes": [
         "movie",
@@ -29,14 +29,14 @@
       ],
       "disabledPlatforms": [],
       "supportsExternalPlayer": true,
-      "notes": "Runtime budget alignment: provider now receives the full 20s app runtime instead of the 10s descriptor default, so the existing bounded title/detail/video/subtitle pipeline is not killed before it can return valid links.",
+      "notes": "V15 Shared Discovery Context: TMDB detail metadata is coalesced by VUEO core once per scan when the V15 runtime bridge is available; local TMDB fallback remains for older runtimes. V15 centralized trace hooks emit metadata/candidate/verification stages without changing source extraction. V15 Shared Discovery Context + centralized trace hooks. TMDB metadata is coalesced by VUEO core when available, with provider-local fallback retained. Candidate/verification stages emit lightweight diagnostics. Runtime budget alignment: provider now receives the full 20s app runtime instead of the 10s descriptor default, so the existing bounded title/detail/video/subtitle pipeline is not killed before it can return valid links.",
       "runtimeTimeoutMs": 20000
     },
     {
       "id": "onetouchtv",
       "name": "OneTouchTV",
       "description": "Asian drama, anime, series and movie streams with subtitle metadata",
-      "version": "1.2.1",
+      "version": "1.3.0",
       "author": "Luckez",
       "supportedTypes": [
         "movie",
@@ -59,14 +59,14 @@
       ],
       "disabledPlatforms": [],
       "supportsExternalPlayer": true,
-      "notes": "Runtime budget alignment: provider now receives the full 20s app runtime instead of the 10s descriptor default; alias searches and detail verification remain parallel and bounded.",
+      "notes": "V15 Shared Discovery Context: TMDB detail metadata is coalesced by VUEO core once per scan when the V15 runtime bridge is available; local TMDB fallback remains for older runtimes. V15 centralized trace hooks emit metadata/candidate/verification stages without changing source extraction. V15 Shared Discovery Context + centralized trace hooks. TMDB metadata is coalesced by VUEO core when available, with provider-local fallback retained. Candidate/verification stages emit lightweight diagnostics. Runtime budget alignment: provider now receives the full 20s app runtime instead of the 10s descriptor default; alias searches and detail verification remain parallel and bounded.",
       "runtimeTimeoutMs": 20000
     },
     {
       "id": "hdhub4u",
       "name": "HDHub4u",
       "description": "Movie and TV stream provider",
-      "version": "1.4.0",
+      "version": "1.5.0",
       "author": "Luckez",
       "supportedTypes": [
         "movie",
@@ -87,13 +87,13 @@
       "disabledPlatforms": [],
       "supportsExternalPlayer": true,
       "runtimeTimeoutMs": 20000,
-      "notes": "Discovery Rebuild V1: raw TMDB title is searched before season/year variants; current and legacy result-card layouts are parsed; noisy release strings are normalized before scoring so valid title matches are not lost. Existing QuickJS recursion/parser hotfixes remain."
+      "notes": "V15 Shared Discovery Context: TMDB detail metadata is coalesced by VUEO core once per scan when the V15 runtime bridge is available; local TMDB fallback remains for older runtimes. V15 centralized trace hooks emit metadata/candidate/verification stages without changing source extraction. V15 Shared Discovery Context + centralized trace hooks. TMDB metadata is coalesced by VUEO core when available, with provider-local fallback retained. Candidate/verification stages emit lightweight diagnostics. Discovery Rebuild V1: raw TMDB title is searched before season/year variants; current and legacy result-card layouts are parsed; noisy release strings are normalized before scoring so valid title matches are not lost. Existing QuickJS recursion/parser hotfixes remain."
     },
     {
       "id": "moviebox",
       "name": "MovieBox",
       "description": "Movie and TV streams from the current MovieBox H5 web API mirror pool",
-      "version": "2.7.0",
+      "version": "2.8.0",
       "author": "Luckez",
       "supportedTypes": [
         "movie",
@@ -115,13 +115,13 @@
       "disabledPlatforms": [],
       "supportsExternalPlayer": true,
       "runtimeTimeoutMs": 20000,
-      "notes": "Discovery Rebuild V1: MovieBox title scoring now strips season/year/quality noise before alias matching, TV year mismatch is a soft preference instead of a hard penalty, and more TMDB aliases are covered without increasing the mirror fan-out."
+      "notes": "V15 Shared Discovery Context: TMDB detail metadata is coalesced by VUEO core once per scan when the V15 runtime bridge is available; local TMDB fallback remains for older runtimes. V15 centralized trace hooks emit metadata/candidate/verification stages without changing source extraction. V15 Shared Discovery Context + centralized trace hooks. TMDB metadata is coalesced by VUEO core when available, with provider-local fallback retained. Candidate/verification stages emit lightweight diagnostics. Discovery Rebuild V1: MovieBox title scoring now strips season/year/quality noise before alias matching, TV year mismatch is a soft preference instead of a hard penalty, and more TMDB aliases are covered without increasing the mirror fan-out."
     },
     {
       "id": "4khdhub",
       "name": "4KHDHub",
       "description": "Movie and TV stream provider",
-      "version": "1.5.0",
+      "version": "1.6.0",
       "author": "Luckez",
       "supportedTypes": [
         "movie",
@@ -142,13 +142,13 @@
       "disabledPlatforms": [],
       "supportsExternalPlayer": true,
       "runtimeTimeoutMs": 20000,
-      "notes": "Discovery Rebuild V1: raw aliases are searched before year/season variants, current movie-card and legacy layouts are both parsed, and noisy release metadata is removed before title scoring. Existing memory-scope guard remains."
+      "notes": "V15 Shared Discovery Context: TMDB detail metadata is coalesced by VUEO core once per scan when the V15 runtime bridge is available; local TMDB fallback remains for older runtimes. V15 centralized trace hooks emit metadata/candidate/verification stages without changing source extraction. V15 Shared Discovery Context + centralized trace hooks. TMDB metadata is coalesced by VUEO core when available, with provider-local fallback retained. Candidate/verification stages emit lightweight diagnostics. Discovery Rebuild V1: raw aliases are searched before year/season variants, current movie-card and legacy layouts are both parsed, and noisy release metadata is removed before title scoring. Existing memory-scope guard remains."
     },
     {
       "id": "pencurimovie",
       "name": "PencuriMovie",
       "description": "Malaysia and Indonesia movie and TV streams with multi-server playback",
-      "version": "1.6.0",
+      "version": "1.7.0",
       "author": "Luckez",
       "supportedTypes": [
         "movie",
@@ -169,14 +169,14 @@
       ],
       "disabledPlatforms": [],
       "supportsExternalPlayer": true,
-      "notes": "Discovery Rebuild V1: broader alias discovery, generic canonical title-anchor parsing, cleaned title scoring, and landing-page fallback before declaring a title missing. Existing multi-server extraction is unchanged.",
+      "notes": "V15 Shared Discovery Context: TMDB detail metadata is coalesced by VUEO core once per scan when the V15 runtime bridge is available; local TMDB fallback remains for older runtimes. V15 centralized trace hooks emit metadata/candidate/verification stages without changing source extraction. V15 Shared Discovery Context + centralized trace hooks. TMDB metadata is coalesced by VUEO core when available, with provider-local fallback retained. Candidate/verification stages emit lightweight diagnostics. Discovery Rebuild V1: broader alias discovery, generic canonical title-anchor parsing, cleaned title scoring, and landing-page fallback before declaring a title missing. Existing multi-server extraction is unchanged.",
       "runtimeTimeoutMs": 20000
     },
     {
       "id": "msm21",
       "name": "MSM21",
       "description": "Malay subtitle movie and TV streams using Zeta player multi-server extraction",
-      "version": "1.5.0",
+      "version": "1.6.0",
       "author": "Luckez",
       "supportedTypes": [
         "movie",
@@ -197,14 +197,14 @@
       ],
       "disabledPlatforms": [],
       "supportsExternalPlayer": true,
-      "notes": "Discovery Rebuild V1: supports both legacy display-item and current ml-item/canonical archive cards, searches more TMDB aliases, cleans release noise before scoring, and falls back to the TV/movie archive before declaring a title missing.",
+      "notes": "V15 Shared Discovery Context: TMDB detail metadata is coalesced by VUEO core once per scan when the V15 runtime bridge is available; local TMDB fallback remains for older runtimes. V15 centralized trace hooks emit metadata/candidate/verification stages without changing source extraction. V15 Shared Discovery Context + centralized trace hooks. TMDB metadata is coalesced by VUEO core when available, with provider-local fallback retained. Candidate/verification stages emit lightweight diagnostics. Discovery Rebuild V1: supports both legacy display-item and current ml-item/canonical archive cards, searches more TMDB aliases, cleans release noise before scoring, and falls back to the TV/movie archive before declaring a title missing.",
       "runtimeTimeoutMs": 20000
     },
     {
       "id": "cinemode",
       "name": "CineMode",
       "description": "Movie and TV stream resolver for the CineMode streaming PWA",
-      "version": "1.2.0",
+      "version": "1.3.0",
       "author": "Luckez",
       "supportedTypes": [
         "movie",
@@ -225,7 +225,7 @@
       "disabledPlatforms": [],
       "supportsExternalPlayer": true,
       "runtimeTimeoutMs": 20000,
-      "notes": "Repo-wide TMDB alias matching V1: primary TMDB title plus one highest-priority alternate title fallback, preserving the bounded WebView runtime."
+      "notes": "V15 Shared Discovery Context: TMDB detail metadata is coalesced by VUEO core once per scan when the V15 runtime bridge is available; local TMDB fallback remains for older runtimes. V15 centralized trace hooks emit metadata/candidate/verification stages without changing source extraction. V15 Shared Discovery Context + centralized trace hooks. TMDB metadata is coalesced by VUEO core when available, with provider-local fallback retained. Candidate/verification stages emit lightweight diagnostics. Repo-wide TMDB alias matching V1: primary TMDB title plus one highest-priority alternate title fallback, preserving the bounded WebView runtime."
     }
   ]
 }

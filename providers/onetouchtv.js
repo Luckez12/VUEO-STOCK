@@ -42,6 +42,51 @@ var AES_INV_SBOX = (function() {
 })();
 var AES_RCON = [0x00,0x01,0x02,0x04,0x08,0x10,0x20,0x40,0x80,0x1b,0x36,0x6c,0xd8,0xab,0x4d,0x9a];
 
+/* VUEO_SHARED_DISCOVERY_CONTEXT_V1 */
+function vueoSharedTmdb(url, fallback) {
+  if (
+    typeof globalThis !== "undefined" &&
+    typeof globalThis.vueoDiscoveryContext === "function"
+  ) {
+    return globalThis.vueoDiscoveryContext(url)
+      .then(function(context) {
+        if (context && context.tmdb) {
+          if (typeof globalThis.vueoTrace === "function") {
+            globalThis.vueoTrace("METADATA", {
+              shared: true,
+              title: context.title || "",
+              year: context.year || "",
+              imdbId: context.imdbId || "",
+              aliases: Array.isArray(context.aliases) ? context.aliases.length : 0
+            });
+          }
+          return context.tmdb;
+        }
+        throw new Error("Shared discovery context is empty");
+      })
+      .catch(function(error) {
+        if (typeof globalThis.vueoTrace === "function") {
+          globalThis.vueoTrace("METADATA_FALLBACK", {
+            reason: error && error.message ? error.message : String(error)
+          });
+        }
+        return fallback();
+      });
+  }
+  return fallback();
+}
+
+function vueoCandidateTrace(stage, details) {
+  try {
+    if (
+      typeof globalThis !== "undefined" &&
+      typeof globalThis.vueoTrace === "function"
+    ) {
+      globalThis.vueoTrace(stage, details || {});
+    }
+  } catch (_) {}
+}
+
 function asciiBytes(value) {
   var text = String(value || "");
   var out = new Array(text.length);
@@ -752,7 +797,12 @@ function getTmdbInfo(tmdbId, mediaType) {
   var endpoint = mediaType === "movie" ? "movie" : "tv";
   var url = "https://api.themoviedb.org/3/" + endpoint + "/" + encodeURIComponent(tmdbId) +
     "?api_key=" + TMDB_API_KEY + "&append_to_response=alternative_titles,translations,external_ids";
-  return fetchJson(url, {}).then(function(data) {
+  return vueoSharedTmdb(
+    url,
+    function() {
+      return fetchJson(url, {});
+    }
+  ).then(function(data) {
     return {
       tmdbId: String(tmdbId),
       title: data.title || data.name || "",
@@ -832,6 +882,12 @@ function findBestTitle(info, mediaType, season) {
       return scoreCandidate(b, info, mediaType, season) - scoreCandidate(a, info, mediaType, season);
     });
 
+    vueoCandidateTrace("CANDIDATE", {
+      count: candidates.length,
+      title: candidates.length ? itemTitle(candidates[0]) : "",
+      score: candidates.length ? scoreCandidate(candidates[0], info, mediaType, season) : 0
+    });
+
     candidates = candidates.slice(0, 6);
     if (!candidates.length) throw new Error("No OneTouchTV title match");
 
@@ -898,6 +954,11 @@ function findBestTitle(info, mediaType, season) {
       if (matches[0].score < 28) {
         throw new Error("OneTouchTV match confidence too low");
       }
+
+      vueoCandidateTrace("VERIFIED", {
+        title: itemTitle(unwrapPayload(matches[0].detail)),
+        score: matches[0].score
+      });
 
       return matches[0];
     });

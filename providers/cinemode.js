@@ -27,6 +27,51 @@ var PROVIDER_BUDGET_MS = 18800;
 var PRIMARY_WEBVIEW_MS = 11800;
 var ALIAS_WEBVIEW_MS = 6200;
 
+/* VUEO_SHARED_DISCOVERY_CONTEXT_V1 */
+function vueoSharedTmdb(url, fallback) {
+  if (
+    typeof globalThis !== "undefined" &&
+    typeof globalThis.vueoDiscoveryContext === "function"
+  ) {
+    return globalThis.vueoDiscoveryContext(url)
+      .then(function(context) {
+        if (context && context.tmdb) {
+          if (typeof globalThis.vueoTrace === "function") {
+            globalThis.vueoTrace("METADATA", {
+              shared: true,
+              title: context.title || "",
+              year: context.year || "",
+              imdbId: context.imdbId || "",
+              aliases: Array.isArray(context.aliases) ? context.aliases.length : 0
+            });
+          }
+          return context.tmdb;
+        }
+        throw new Error("Shared discovery context is empty");
+      })
+      .catch(function(error) {
+        if (typeof globalThis.vueoTrace === "function") {
+          globalThis.vueoTrace("METADATA_FALLBACK", {
+            reason: error && error.message ? error.message : String(error)
+          });
+        }
+        return fallback();
+      });
+  }
+  return fallback();
+}
+
+function vueoCandidateTrace(stage, details) {
+  try {
+    if (
+      typeof globalThis !== "undefined" &&
+      typeof globalThis.vueoTrace === "function"
+    ) {
+      globalThis.vueoTrace(stage, details || {});
+    }
+  } catch (_) {}
+}
+
 function withSoftTimeout(
   promise,
   timeoutMs,
@@ -111,9 +156,14 @@ function getTmdbInfo(
     TMDB_API_KEY +
     "&append_to_response=alternative_titles,translations,external_ids";
 
-  return fetchJson(
+  return vueoSharedTmdb(
     url,
-    1600
+    function() {
+      return fetchJson(
+        url,
+        1600
+      );
+    }
   ).then(function(data) {
     return {
       title:
@@ -747,6 +797,12 @@ function getStreams(
             "TMDB title is empty"
           );
         }
+
+        vueoCandidateTrace("SEARCH", {
+          title: info.title,
+          aliases: Array.isArray(info.aliases) ? info.aliases.length : 0,
+          mode: "webview"
+        });
 
         return runUiSearch(
           info.title,

@@ -17,6 +17,51 @@ var currentBaseUrl = BASE_URL.replace(/\/+$/, "");
 var MIRROR_CACHE = Object.create(null);
 var MIRROR_CACHE_TTL_MS = 90000;
 
+/* VUEO_SHARED_DISCOVERY_CONTEXT_V1 */
+function vueoSharedTmdb(url, fallback) {
+  if (
+    typeof globalThis !== "undefined" &&
+    typeof globalThis.vueoDiscoveryContext === "function"
+  ) {
+    return globalThis.vueoDiscoveryContext(url)
+      .then(function(context) {
+        if (context && context.tmdb) {
+          if (typeof globalThis.vueoTrace === "function") {
+            globalThis.vueoTrace("METADATA", {
+              shared: true,
+              title: context.title || "",
+              year: context.year || "",
+              imdbId: context.imdbId || "",
+              aliases: Array.isArray(context.aliases) ? context.aliases.length : 0
+            });
+          }
+          return context.tmdb;
+        }
+        throw new Error("Shared discovery context is empty");
+      })
+      .catch(function(error) {
+        if (typeof globalThis.vueoTrace === "function") {
+          globalThis.vueoTrace("METADATA_FALLBACK", {
+            reason: error && error.message ? error.message : String(error)
+          });
+        }
+        return fallback();
+      });
+  }
+  return fallback();
+}
+
+function vueoCandidateTrace(stage, details) {
+  try {
+    if (
+      typeof globalThis !== "undefined" &&
+      typeof globalThis.vueoTrace === "function"
+    ) {
+      globalThis.vueoTrace(stage, details || {});
+    }
+  } catch (_) {}
+}
+
 function withSoftTimeout(promise, timeoutMs, label) {
   return new Promise(function(resolve, reject) {
     var done = false;
@@ -481,7 +526,12 @@ function getTmdbInfo(tmdbId, mediaType) {
     "https://api.themoviedb.org/3/" + endpoint + "/" + encodeURIComponent(tmdbId) +
     "?api_key=" + TMDB_API_KEY + "&append_to_response=alternative_titles,translations,external_ids";
 
-  return requestJson(url, { "Accept": "application/json" }, 1500).then(function(data) {
+  return vueoSharedTmdb(
+    url,
+    function() {
+      return requestJson(url, { "Accept": "application/json" }, 1500);
+    }
+  ).then(function(data) {
     return {
       tmdbId: String(tmdbId),
       title: String(data && (data.title || data.name) || ""),
@@ -1068,6 +1118,12 @@ function findBestTitle(info, mediaType) {
             info,
             mediaType
           );
+
+        vueoCandidateTrace("CANDIDATE", {
+          count: list.length,
+          title: list[0] ? list[0].title : "",
+          score: topScore
+        });
 
         return topScore >= 44
           ? list[0]
