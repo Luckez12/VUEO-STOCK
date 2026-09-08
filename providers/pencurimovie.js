@@ -351,6 +351,62 @@ function bestAliasTitleScore(candidate, info) {
   return best;
 }
 
+
+/* VUEO_DISCOVERY_REBUILD_V1 */
+function cleanDiscoveryTitlePencuri(value) {
+  return normalizeTitle(
+    String(value || "")
+      .replace(/\[(?:[^\]]{0,120})\]/g, " ")
+      .replace(/\b(?:19|20)\d{2}\b/g, " ")
+      .replace(/\bs\d{1,2}(?:\s*[-–]\s*s\d{1,2})?\b/gi, " ")
+      .replace(/\b(?:ep|episode|e)\s*[-#:]?\s*\d{1,3}\b/gi, " ")
+      .replace(/\b(?:2160p|1080p|720p|480p|4k|web[- ]?dl|bluray|hevc|h26[45]|10bit|malaysub|malaydub|series|movies?)\b/gi, " ")
+  );
+}
+
+function bestDiscoveryTitleScorePencuri(candidate, info) {
+  var aliases =
+    info &&
+    Array.isArray(info.aliases) &&
+    info.aliases.length
+      ? info.aliases
+      : [
+          info && info.title,
+          info && info.originalTitle
+        ];
+
+  var cleanCandidate =
+    cleanDiscoveryTitlePencuri(candidate);
+
+  var best = 0;
+
+  aliases.forEach(function(alias) {
+    var cleanAlias =
+      cleanDiscoveryTitlePencuri(alias);
+
+    if (!cleanCandidate || !cleanAlias) return;
+
+    if (cleanCandidate === cleanAlias) {
+      best = Math.max(best, 100);
+    } else if (
+      cleanCandidate.indexOf(cleanAlias) !== -1 ||
+      cleanAlias.indexOf(cleanCandidate) !== -1
+    ) {
+      best = Math.max(best, 90);
+    } else {
+      best = Math.max(
+        best,
+        titleScore(
+          cleanCandidate,
+          cleanAlias
+        )
+      );
+    }
+  });
+
+  return best;
+}
+
 function buildAliasQueries(info, limit) {
   var output = [];
   var seen = {};
@@ -418,53 +474,197 @@ function getTmdbInfo(tmdbId, mediaType) {
 function parseSearchResults(html, baseUrl) {
   var results = [];
   var seen = {};
+  var rank = 0;
 
-  function addFromBlock(block) {
-    var anchorMatch = String(block || "").match(/<a\b[^>]*href\s*=\s*(["'])[\s\S]*?\1[^>]*>/i);
-    if (!anchorMatch) return;
+  function add(
+    title,
+    href,
+    year,
+    isSeries
+  ) {
+    var cleanTitle =
+      String(title || "")
+        .replace(/\s+/g, " ")
+        .trim();
 
-    var tag = anchorMatch[0];
-    var href = safeUrl(getAttr(tag, "href"), baseUrl);
-    if (!href || seen[href]) return;
+    var absolute =
+      safeUrl(
+        href,
+        baseUrl
+      );
 
-    var title = getAttr(tag, "oldtitle") || getAttr(tag, "title");
-    if (title) title = title.split("(")[0].trim();
-
-    if (!title) {
-      var h2 = block.match(/<h2\b[^>]*>([\s\S]*?)<\/h2>/i);
-      title = h2 ? stripTags(h2[1]) : "";
+    if (
+      !cleanTitle ||
+      !absolute ||
+      seen[absolute]
+    ) {
+      return;
     }
 
-    if (!title) return;
+    if (
+      /\/(?:category|tag|author|page)\//i.test(absolute)
+    ) {
+      return;
+    }
 
-    var rawYear = yearFrom(getAttr(tag, "oldtitle")) || yearFrom(block);
-    var isSeries =
-      /mli-eps/i.test(block) ||
-      /\/series(?:\/|$)/i.test(href) ||
-      /tvseason/i.test(block);
+    seen[absolute] = true;
 
-    seen[href] = true;
     results.push({
-      title: title,
-      href: href,
-      year: rawYear,
-      isSeries: isSeries
+      title: cleanTitle,
+      href: absolute,
+      year: year || yearFrom(cleanTitle),
+      isSeries:
+        Boolean(isSeries) ||
+        /\/(?:series|tvshows)\//i.test(absolute),
+      rank: rank++
     });
+  }
+
+  function addFromBlock(block) {
+    var anchorMatch =
+      String(block || "")
+        .match(
+          /<a\b[^>]*href\s*=\s*(["'])[\s\S]*?\1[^>]*>/i
+        );
+
+    if (!anchorMatch) return;
+
+    var tag =
+      anchorMatch[0];
+
+    var href =
+      getAttr(
+        tag,
+        "href"
+      );
+
+    var title =
+      getAttr(
+        tag,
+        "oldtitle"
+      ) ||
+      getAttr(
+        tag,
+        "title"
+      );
+
+    if (title) {
+      title =
+        title
+          .split("(")[0]
+          .trim();
+    }
+
+    if (!title) {
+      var heading =
+        String(block || "")
+          .match(
+            /<(?:h2|h3)\b[^>]*>([\s\S]*?)<\/(?:h2|h3)>/i
+          );
+
+      title =
+        heading
+          ? stripTags(
+              heading[1]
+            )
+          : "";
+    }
+
+    if (!title) {
+      var image =
+        String(block || "")
+          .match(
+            /<img\b[^>]*alt\s*=\s*(["'])([\s\S]*?)\1[^>]*>/i
+          );
+
+      title =
+        image
+          ? stripTags(
+              image[2]
+            )
+          : "";
+    }
+
+    add(
+      title,
+      href,
+      yearFrom(
+        getAttr(
+          tag,
+          "oldtitle"
+        )
+      ) ||
+        yearFrom(
+          block
+        ),
+      /mli-eps/i.test(block) ||
+        /tvseason/i.test(block)
+    );
   }
 
   var cardRegex =
     /<div\b[^>]*class\s*=\s*(["'])[^"']*\bml-item\b[^"']*\1[^>]*>([\s\S]*?)(?=<div\b[^>]*class\s*=\s*(["'])[^"']*\bml-item\b[^"']*\3[^>]*>|$)/gi;
+
   var card;
-  while ((card = cardRegex.exec(html))) {
-    addFromBlock(card[0]);
+
+  while (
+    (card = cardRegex.exec(
+      String(html || "")
+    ))
+  ) {
+    addFromBlock(
+      card[0]
+    );
   }
 
-  if (!results.length) {
-    var anchorRegex = /<a\b[^>]*(?:oldtitle|title)\s*=\s*(["'])[\s\S]*?\1[^>]*>/gi;
-    var anchor;
-    while ((anchor = anchorRegex.exec(html))) {
-      addFromBlock(anchor[0]);
+  /*
+   * Generic discovery fallback for site-layout changes.
+   */
+  var anchorRegex =
+    /<a\b[^>]*href\s*=\s*(["'])[\s\S]*?\1[^>]*>([\s\S]*?)<\/a>/gi;
+
+  var anchor;
+
+  while (
+    (anchor = anchorRegex.exec(
+      String(html || "")
+    ))
+  ) {
+    var tag =
+      anchor[0];
+
+    var href =
+      getAttr(
+        tag,
+        "href"
+      );
+
+    if (
+      !href ||
+      !/\/(?:series|tvshows|movies?)\//i.test(href)
+    ) {
+      continue;
     }
+
+    var title =
+      getAttr(
+        tag,
+        "oldtitle"
+      ) ||
+      getAttr(
+        tag,
+        "title"
+      ) ||
+      stripTags(
+        anchor[2]
+      );
+
+    add(
+      title,
+      href,
+      yearFrom(title),
+      /\/(?:series|tvshows)\//i.test(href)
+    );
   }
 
   return results;
@@ -472,19 +672,59 @@ function parseSearchResults(html, baseUrl) {
 
 function scoreCandidate(item, info, mediaType) {
   var score =
-    bestAliasTitleScore(
+    bestDiscoveryTitleScorePencuri(
       item.title,
       info
     );
 
-  if (info.year && item.year && info.year === item.year) score += 28;
-  if (mediaType === "tv" && item.isSeries) score += 24;
-  if (mediaType === "movie" && !item.isSeries) score += 18;
-  if (mediaType === "tv" && !item.isSeries) score -= 24;
+  if (
+    info.year &&
+    item.year &&
+    info.year === item.year
+  ) {
+    score += 18;
+  }
+
+  if (
+    mediaType === "tv" &&
+    item.isSeries
+  ) {
+    score += 24;
+  }
+
+  if (
+    mediaType === "movie" &&
+    !item.isSeries
+  ) {
+    score += 18;
+  }
+
+  if (
+    mediaType === "tv" &&
+    !item.isSeries
+  ) {
+    score -= 40;
+  }
+
+  if (
+    mediaType === "movie" &&
+    item.isSeries
+  ) {
+    score -= 40;
+  }
+
+  score +=
+    Math.max(
+      0,
+      8 -
+      Number(
+        item.rank ||
+        0
+      )
+    );
 
   return score;
 }
-
 
 function slugifyTitle(value) {
   var text = String(value || "");
@@ -573,7 +813,7 @@ function buildPencuriDirectCandidates(baseUrl, info, mediaType) {
   var titles =
     buildAliasQueries(
       info,
-      4
+      8
     );
 
   var output = [];
@@ -673,6 +913,73 @@ function searchSite(baseUrl, query) {
   });
 }
 
+
+function browsePencuriLanding(
+  baseUrl,
+  mediaType
+) {
+  var domain =
+    trimSlash(
+      cachedBaseUrl ||
+      baseUrl
+    );
+
+  var paths =
+    mediaType === "tv"
+      ? ["/", "/series/"]
+      : ["/", "/movies/"];
+
+  return collectValuesBounded(
+    paths.map(function(path) {
+      return function() {
+        var url =
+          domain +
+          path;
+
+        return requestText(
+          url,
+          {
+            "Referer":
+              domain +
+              "/"
+          },
+          2600
+        )
+          .then(function(result) {
+            updateBaseFromUrl(
+              result.url ||
+              url
+            );
+
+            return parseSearchResults(
+              result.text,
+              result.url ||
+              url
+            );
+          })
+          .catch(function() {
+            return [];
+          });
+      };
+    }),
+    2,
+    4200
+  ).then(function(groups) {
+    var merged = [];
+
+    groups.forEach(function(group) {
+      merged =
+        merged.concat(
+          Array.isArray(group)
+            ? group
+            : []
+        );
+    });
+
+    return merged;
+  });
+}
+
 function findBestTitle(baseUrl, info, mediaType) {
   return tryDirectPencuriPage(
     baseUrl,
@@ -682,42 +989,110 @@ function findBestTitle(baseUrl, info, mediaType) {
     if (direct) return direct;
 
     console.log(
-      "[PencuriMovie] direct permalink miss, using alias-aware site search"
+      "[PencuriMovie] direct permalink miss, using discovery search"
     );
 
     var queries =
       buildAliasQueries(
         info,
-        4
+        8
       );
 
     return collectValuesBounded(
       queries.map(function(query) {
         return function() {
           return searchSite(
-            cachedBaseUrl || baseUrl,
+            cachedBaseUrl ||
+            baseUrl,
             query
-          ).catch(function() { return []; });
+          )
+            .catch(function() {
+              return [];
+            });
         };
       }),
       3,
-      6500
+      7600
     ).then(function(groups) {
-      var seen = Object.create(null);
+      var seen =
+        Object.create(null);
+
       var candidates = [];
 
       groups.forEach(function(items) {
-        (Array.isArray(items) ? items : []).forEach(function(item) {
-          if (!item || !item.href || seen[item.href]) return;
+        (
+          Array.isArray(items)
+            ? items
+            : []
+        ).forEach(function(item) {
+          if (
+            !item ||
+            !item.href ||
+            seen[item.href]
+          ) {
+            return;
+          }
+
           seen[item.href] = true;
           candidates.push(item);
         });
       });
 
-      candidates.sort(function(a, b) {
-        return scoreCandidate(b, info, mediaType) - scoreCandidate(a, info, mediaType);
+      function choose(items) {
+        var list =
+          Array.isArray(items)
+            ? items.slice()
+            : [];
+
+        list.sort(function(a, b) {
+          return (
+            scoreCandidate(
+              b,
+              info,
+              mediaType
+            ) -
+            scoreCandidate(
+              a,
+              info,
+              mediaType
+            )
+          );
+        });
+
+        if (!list.length) {
+          return null;
+        }
+
+        return (
+          scoreCandidate(
+            list[0],
+            info,
+            mediaType
+          ) >= 44
+        )
+          ? list[0]
+          : null;
+      }
+
+      var best =
+        choose(candidates);
+
+      if (best) {
+        return best;
+      }
+
+      return browsePencuriLanding(
+        baseUrl,
+        mediaType
+      ).then(function(landingItems) {
+        return choose(
+          candidates.concat(
+            Array.isArray(landingItems)
+              ? landingItems
+              : []
+          )
+        );
       });
-      return candidates[0] || null;
     });
   }).then(function(best) {
     if (!best) {
@@ -734,7 +1109,7 @@ function findBestTitle(baseUrl, info, mediaType) {
           mediaType
         );
 
-      if (score < 24) {
+      if (score < 44) {
         throw new Error(
           "PencuriMovie match confidence too low"
         );
@@ -744,6 +1119,7 @@ function findBestTitle(baseUrl, info, mediaType) {
     return best;
   });
 }
+
 function parseEpisodeTarget(html, pageUrl, requestedSeason, requestedEpisode) {
   var seasonNumber = Number(requestedSeason || 1);
   var episodeNumber = Number(requestedEpisode || 1);

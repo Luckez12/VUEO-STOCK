@@ -455,6 +455,20 @@ function collectTmdbAliases(data, mediaType) {
     .slice(0, 12);
 }
 
+
+/* VUEO_DISCOVERY_REBUILD_V1 */
+function cleanDiscoveryTitleMovieBox(value) {
+  return normalizeTitle(
+    String(value || "")
+      .replace(/\[(?:[^\]]{0,120})\]/g, " ")
+      .replace(/\b(?:19|20)\d{2}\b/g, " ")
+      .replace(/\bseason\s*\d{1,2}\b/gi, " ")
+      .replace(/\bs\d{1,2}\b/gi, " ")
+      .replace(/\b(?:ep|episode|e)\s*[-#:]?\s*\d{1,3}\b/gi, " ")
+      .replace(/\b(?:2160p|1080p|720p|480p|4k|web[- ]?dl|bluray|hevc|h26[45]|10bit|series|movie)\b/gi, " ")
+  );
+}
+
 function bestAliasTitleScore(candidate, info) {
   var aliases =
     info &&
@@ -467,8 +481,17 @@ function bestAliasTitleScore(candidate, info) {
         ];
 
   var best = 0;
+  var cleanCandidate =
+    cleanDiscoveryTitleMovieBox(
+      candidate
+    );
 
   aliases.forEach(function(alias) {
+    var cleanAlias =
+      cleanDiscoveryTitleMovieBox(
+        alias
+      );
+
     best = Math.max(
       best,
       titleScore(
@@ -476,6 +499,34 @@ function bestAliasTitleScore(candidate, info) {
         alias
       )
     );
+
+    if (
+      cleanCandidate &&
+      cleanAlias
+    ) {
+      if (cleanCandidate === cleanAlias) {
+        best = Math.max(
+          best,
+          100
+        );
+      } else if (
+        cleanCandidate.indexOf(cleanAlias) !== -1 ||
+        cleanAlias.indexOf(cleanCandidate) !== -1
+      ) {
+        best = Math.max(
+          best,
+          92
+        );
+      } else {
+        best = Math.max(
+          best,
+          titleScore(
+            cleanCandidate,
+            cleanAlias
+          )
+        );
+      }
+    }
   });
 
   return best;
@@ -595,9 +646,16 @@ function scoreCandidate(item, info, mediaType) {
     year
   ) {
     if (String(info.year) === String(year)) {
-      score += 30;
+      score += 24;
     } else {
-      score -= 30;
+      /*
+       * TV mirrors sometimes expose the latest-season year instead of the
+       * original first-air year. Treat year as a preference, not a hard miss.
+       */
+      score -=
+        mediaType === "tv"
+          ? 8
+          : 24;
     }
   }
 
@@ -753,7 +811,7 @@ function searchH5(
   var queries =
     buildAliasQueries(
       info,
-      5
+      7
     );
 
   var primary =
@@ -774,7 +832,7 @@ function searchH5(
 
     var fallbackQueries =
       queries
-        .slice(1, 5);
+        .slice(1, 7);
 
     if (!fallbackQueries.length) {
       return null;
@@ -809,7 +867,7 @@ function searchH5(
 
     return collectSettled(
       tasks,
-      4100
+      5200
     ).then(function(extra) {
       var aliasBest =
         chooseAcrossMirrors(

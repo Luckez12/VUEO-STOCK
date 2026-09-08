@@ -466,80 +466,301 @@ function best4KSimilarity(candidate, aliases) {
   return best;
 }
 
-function isConfident4KMatch(item, query, targetYear, aliases) {
-  if (!item) return false;
-  var expected = aliases && aliases.length ? aliases : [query];
-  var left = normalizeTitle(item.title || '');
-  var exact = expected.some(function(alias) {
-    return left && left === normalizeTitle(alias);
-  });
-  var containment = expected.some(function(alias) {
-    var right = normalizeTitle(alias);
-    return left && right && (left.indexOf(right) !== -1 || right.indexOf(left) !== -1);
-  });
-  var similarity = best4KSimilarity(item.title || '', expected);
-  if (exact || containment || similarity >= 0.46) return true;
 
-  var yearMatch = String(item.year || '').match(/(19|20)\d{2}/);
-  var itemYear = yearMatch ? Number(yearMatch[0]) : 0;
-  var expectedYear = Number(targetYear || 0);
-  return Boolean(expectedYear && itemYear === expectedYear && similarity >= 0.30);
+/* VUEO_DISCOVERY_REBUILD_V1 */
+function cleanDiscoveryTitle4K(value) {
+  return normalizeTitle(
+    String(value || '')
+      .replace(/\[(?:[^\]]{0,120})\]/g, ' ')
+      .replace(/\b(?:19|20)\d{2}\b/g, ' ')
+      .replace(/\bs\d{1,2}(?:\s*[-–]\s*s\d{1,2})?\b/gi, ' ')
+      .replace(/\b(?:ep|episode|e)\s*[-#:]?\s*\d{1,3}\b/gi, ' ')
+      .replace(/\b(?:2160p|1080p|720p|480p|4k|fhd|uhd|hdr|dv|dovi|bluray|web[- ]?dl|hevc|h26[45]|10bit|dual language|dual audio|multi audios?|hindi|english|tamil|telugu|series|movies?)\b/gi, ' ')
+  );
 }
 
-function findBestMatch(results, query, targetYear, mediaType, aliases) {
-  if (!results || results.length === 0) return null;
-  var scored = results.filter(function(r) {
-    return isConfident4KMatch(r, query, targetYear, aliases);
-  }).map(function (r) {
-    var score = 0;
-    var exactAlias =
-      (aliases && aliases.length ? aliases : [query])
-        .some(function(alias) {
-          return normalizeTitle(r.title) === normalizeTitle(alias);
-        });
-    if (exactAlias) score += 100;
-    var sim = best4KSimilarity(r.title, aliases && aliases.length ? aliases : [query]); score += sim * 50;
-    var containment =
-      (aliases && aliases.length ? aliases : [query])
-        .some(function(alias) {
-          var left = normalizeTitle(r.title);
-          var right = normalizeTitle(alias);
-          return left && right && (left.indexOf(right) !== -1 || right.indexOf(left) !== -1);
-        });
-    if (containment) score += 15;
-    var lengthDiff = Math.abs(r.title.length - query.length);
-    score += Math.max(0, 10 - lengthDiff / 5);
-    if (/(19|20)\d{2}/.test(r.title)) score += 5;
+function bestDiscoverySimilarity4K(candidate, aliases) {
+  var cleanCandidate =
+    cleanDiscoveryTitle4K(candidate);
 
-    var path = String(r.url || '').toLowerCase();
-    var resultType =
-      path.indexOf('-movie-') !== -1
-        ? 'movie'
-        : path.indexOf('-series-') !== -1
-          ? 'tv'
-          : '';
+  var best = 0;
 
-    if (resultType && mediaType) {
-      if (resultType === mediaType) score += 80;
-      else score -= 140;
+  (aliases || []).forEach(function(alias) {
+    var cleanAlias =
+      cleanDiscoveryTitle4K(alias);
+
+    if (!cleanCandidate || !cleanAlias) {
+      return;
     }
 
-    // Year awareness: prefer results matching TMDB year
-    var rYear = null;
-    try {
-      var yMatch = (r.year || '').toString().match(/(19|20)\d{2}/);
-      if (yMatch) rYear = parseInt(yMatch[0], 10);
-    } catch (e) { /* ignore */ }
-    var ty = parseInt(targetYear, 10);
-    if (ty && !isNaN(ty)) {
-      if (rYear === ty) score += 200; // strong boost for exact year match
-      else if (rYear && Math.abs(rYear - ty) <= 1) score += 30; // slight off-by-one boost
-      else if (rYear) score -= 100; // penalize clearly different year
+    if (cleanCandidate === cleanAlias) {
+      best = Math.max(best, 1);
+    } else if (
+      cleanCandidate.indexOf(cleanAlias) !== -1 ||
+      cleanAlias.indexOf(cleanCandidate) !== -1
+    ) {
+      best = Math.max(best, 0.92);
+    } else {
+      best = Math.max(
+        best,
+        calculateSimilarity(
+          cleanCandidate,
+          cleanAlias
+        )
+      );
     }
-    return { item: r, score: score };
   });
-  scored.sort(function (a, b) { return b.score - a.score; });
-  if (!scored.length) return null;
+
+  return best;
+}
+
+function buildDiscoveryQueries4K(
+  tmdb,
+  mediaType,
+  season
+) {
+  var output = [];
+  var seen = {};
+
+  function add(value) {
+    var text =
+      String(value || '')
+        .trim();
+
+    var key =
+      normalizeTitle(text);
+
+    if (
+      !text ||
+      !key ||
+      seen[key]
+    ) {
+      return;
+    }
+
+    seen[key] = true;
+    output.push(text);
+  }
+
+  (tmdb.aliases || [
+    tmdb.title,
+    tmdb.original_title
+  ])
+    .slice(0, 8)
+    .forEach(function(alias) {
+      /*
+       * Raw title comes first. The old provider always appended the TMDB
+       * year, which can make WordPress/site search miss a title that is
+       * indexed only by its base name.
+       */
+      add(alias);
+
+      if (tmdb.year) {
+        add(
+          alias +
+          ' ' +
+          tmdb.year
+        );
+      }
+
+      if (mediaType === 'tv') {
+        add(
+          alias +
+          ' season ' +
+          season
+        );
+
+        add(
+          alias +
+          ' s' +
+          String(season)
+            .padStart(2, '0')
+        );
+      }
+    });
+
+  return output.slice(0, 14);
+}
+
+function isConfident4KMatch(item, query, targetYear, aliases) {
+  if (!item) return false;
+
+  var expected =
+    aliases && aliases.length
+      ? aliases
+      : [query];
+
+  var similarity =
+    bestDiscoverySimilarity4K(
+      item.title || '',
+      expected
+    );
+
+  if (similarity >= 0.44) {
+    return true;
+  }
+
+  var yearMatch =
+    String(
+      item.year ||
+      item.title ||
+      ''
+    ).match(/(19|20)\d{2}/);
+
+  var itemYear =
+    yearMatch
+      ? Number(yearMatch[0])
+      : 0;
+
+  return Boolean(
+    targetYear &&
+    itemYear === Number(targetYear) &&
+    similarity >= 0.30
+  );
+}
+
+function findBestMatch(
+  results,
+  query,
+  targetYear,
+  mediaType,
+  aliases,
+  requestedSeason
+) {
+  if (!results || results.length === 0) {
+    return null;
+  }
+
+  var expected =
+    aliases && aliases.length
+      ? aliases
+      : [query];
+
+  var scored =
+    results
+      .filter(function(item) {
+        return isConfident4KMatch(
+          item,
+          query,
+          targetYear,
+          expected
+        );
+      })
+      .map(function(item) {
+        var rawTitle =
+          String(
+            item.title ||
+            ''
+          );
+
+        var score =
+          bestDiscoverySimilarity4K(
+            rawTitle,
+            expected
+          ) * 100;
+
+        var path =
+          String(
+            item.url ||
+            ''
+          ).toLowerCase();
+
+        var resultType =
+          path.indexOf('-movie-') !== -1
+            ? 'movie'
+            : path.indexOf('-series-') !== -1
+              ? 'tv'
+              : '';
+
+        if (resultType) {
+          score +=
+            resultType === mediaType
+              ? 28
+              : -80;
+        }
+
+        var yearMatch =
+          String(
+            item.year ||
+            rawTitle
+          ).match(/(19|20)\d{2}/);
+
+        var itemYear =
+          yearMatch
+            ? Number(yearMatch[0])
+            : 0;
+
+        if (
+          targetYear &&
+          itemYear
+        ) {
+          var diff =
+            Math.abs(
+              Number(targetYear) -
+              itemYear
+            );
+
+          if (diff === 0) {
+            score += 15;
+          } else if (diff <= 1) {
+            score += 4;
+          } else if (diff >= 5) {
+            score -= 10;
+          }
+        }
+
+        if (
+          mediaType === 'tv' &&
+          requestedSeason
+        ) {
+          var exactSeason =
+            new RegExp(
+              '\\\\bS0*' +
+              Number(requestedSeason) +
+              '\\\\b',
+              'i'
+            );
+
+          var rangeSeason =
+            new RegExp(
+              '\\\\bS0*1\\\\s*[-–]\\\\s*S0*' +
+              Number(requestedSeason) +
+              '\\\\b',
+              'i'
+            );
+
+          if (
+            exactSeason.test(rawTitle) ||
+            rangeSeason.test(rawTitle)
+          ) {
+            score += 10;
+          }
+        }
+
+        return {
+          item: item,
+          score: score
+        };
+      });
+
+  scored.sort(function(a, b) {
+    return b.score - a.score;
+  });
+
+  if (
+    !scored.length ||
+    scored[0].score < 44
+  ) {
+    return null;
+  }
+
+  console.log(
+    '[4KHDHub] Discovery selected title="' +
+    scored[0].item.title +
+    '" score=' +
+    scored[0].score.toFixed(1)
+  );
+
   return scored[0].item;
 }
 
@@ -669,57 +890,194 @@ function getRedirectLinks(url) {
 }
 
 // Search content
-function searchContent(query) {
-  return getDomains().then(function (domains) {
-    var baseUrl = domains && domains['4khdhub'] ? domains['4khdhub'] : FALLBACK_4KHDHUB_URL;
-    var searchUrl = baseUrl + '/?s=' + encodeURIComponent(query);
-    return makeRequest(searchUrl).then(function (res) { return res.text(); }).then(function (html) {
-      var $ = cheerio.load(html);
-      var results = [];
-      
-      // Primary parsing for new movie-card structure
-      $('a').each(function (i, el) {
-        var $el = $(el);
-        var title = $el.find('h3.movie-card-title').text().trim();
-        var href = $el.attr('href');
-        var poster = $el.find('img').attr('src') || '';
-        var year = $el.find('p.movie-card-meta').text().trim();
-        
-        if (title && href) {
-          var absoluteUrl = href.indexOf('http') === 0 ? href : (baseUrl + (href.indexOf('/') === 0 ? '' : '/') + href);
-          results.push({ title: title, url: absoluteUrl, poster: poster, year: year });
-        }
-      });
-      
-      // Fallback parsing for legacy card-grid structure
-      if (results.length === 0) {
-        $('div.card-grid a').each(function (i, el) {
-          var $el = $(el);
-          var title = $el.find('h3').text().trim();
-          var href = $el.attr('href');
-          var poster = $el.find('img').attr('src') || '';
-          if (title && href) {
-            var absoluteUrl = href.indexOf('http') === 0 ? href : (baseUrl + (href.indexOf('/') === 0 ? '' : '/') + href);
-            results.push({ title: title, url: absoluteUrl, poster: poster });
-          }
-        });
-      }
-      
-      // Final fallback for general anchors
-      if (results.length === 0) {
-        $('a[href]').each(function (i, el) {
-          var $el2 = $(el);
-          var h = $el2.attr('href') || '';
-          var t = ($el2.text() || '').trim();
-          if (t && h && /\/\d{4}\//.test(h)) {
-            var abs = h.indexOf('http') === 0 ? h : (baseUrl + (h.indexOf('/') === 0 ? '' : '/') + h);
-            results.push({ title: t, url: abs, poster: '' });
-          }
-        });
-      }
-      return results;
+function parse4KSearchCards(
+  html,
+  baseUrl
+) {
+  var $ =
+    cheerio.load(
+      html
+    );
+
+  var results = [];
+  var seen = {};
+
+  function add(
+    title,
+    href,
+    poster,
+    yearText
+  ) {
+    var cleanTitle =
+      String(title || '')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    var rawHref =
+      String(href || '')
+        .trim();
+
+    if (
+      !cleanTitle ||
+      !rawHref
+    ) {
+      return;
+    }
+
+    var absoluteUrl =
+      rawHref.indexOf('http') === 0
+        ? rawHref
+        : (
+            baseUrl +
+            (
+              rawHref.indexOf('/') === 0
+                ? ''
+                : '/'
+            ) +
+            rawHref
+          );
+
+    if (
+      seen[absoluteUrl] ||
+      /\/(?:category|tag|author|page)\//i
+        .test(absoluteUrl)
+    ) {
+      return;
+    }
+
+    seen[absoluteUrl] = true;
+
+    results.push({
+      title: cleanTitle,
+      url: absoluteUrl,
+      poster:
+        String(
+          poster ||
+          ''
+        ),
+      year:
+        String(
+          yearText ||
+          cleanTitle
+        )
     });
+  }
+
+  /*
+   * VUEO_DISCOVERY_REBUILD_V1
+   * Current layout uses movie-card-title, while older mirrors have used
+   * card-grid and generic post cards. Collect all supported layouts.
+   */
+  $('a[href]').each(function(i, el) {
+    var anchor = $(el);
+    var href =
+      anchor.attr('href') ||
+      '';
+
+    var title =
+      anchor
+        .find('h3.movie-card-title')
+        .text()
+        .trim() ||
+      anchor
+        .find('h2,h3')
+        .first()
+        .text()
+        .trim() ||
+      anchor.attr('title') ||
+      anchor
+        .find('img')
+        .attr('alt') ||
+      '';
+
+    var meta =
+      anchor
+        .find('p.movie-card-meta')
+        .text()
+        .trim() ||
+      anchor
+        .closest('article,li,div')
+        .find('.movie-card-meta,.meta')
+        .first()
+        .text()
+        .trim();
+
+    if (
+      title &&
+      href &&
+      (
+        /-(?:series|movie)-\d+\/?$/i
+          .test(href) ||
+        /\/(?:series|movies?)\//i
+          .test(href) ||
+        anchor
+          .find('h3.movie-card-title')
+          .length
+      )
+    ) {
+      add(
+        title,
+        href,
+        anchor
+          .find('img')
+          .attr('src') ||
+          '',
+        meta
+      );
+    }
   });
+
+  $('div.card-grid a').each(function(i, el) {
+    var anchor =
+      $(el);
+
+    add(
+      anchor
+        .find('h3')
+        .text()
+        .trim(),
+      anchor.attr('href'),
+      anchor
+        .find('img')
+        .attr('src') ||
+        '',
+      anchor.text()
+    );
+  });
+
+  return results;
+}
+
+function searchContent(query) {
+  return getDomains()
+    .then(function(domains) {
+      var baseUrl =
+        domains &&
+        domains['4khdhub']
+          ? domains['4khdhub']
+          : FALLBACK_4KHDHUB_URL;
+
+      var searchUrl =
+        baseUrl +
+        '/?s=' +
+        encodeURIComponent(query);
+
+      return makeRequest(
+        searchUrl,
+        {
+          timeoutMs: 3200
+        }
+      )
+        .then(function(res) {
+          return res.text();
+        })
+        .then(function(html) {
+          return parse4KSearchCards(
+            html,
+            baseUrl
+          );
+        });
+    });
 }
 
 // Load content page and collect download links (and episodes for TV)
@@ -1613,43 +1971,23 @@ function getStreams(
         return [];
       }
 
-      var queries = [];
-      var querySeen = {};
-
-      function addQuery(title) {
-        var clean =
-          String(title || '').trim();
-
-        if (!clean) return;
-
-        var key =
-          normalizeTitle(clean);
-
-        if (
-          !key ||
-          querySeen[key]
-        ) {
-          return;
-        }
-
-        querySeen[key] = true;
-
-        queries.push(
-          clean +
-          (
-            tmdb.year
-              ? ' ' + tmdb.year
-              : ''
-          )
+      var queries =
+        buildDiscoveryQueries4K(
+          tmdb,
+          type,
+          requestedSeason
         );
-      }
 
-      (tmdb.aliases || [
-        tmdb.title,
-        tmdb.original_title
-      ])
-        .slice(0, 4)
-        .forEach(addQuery);
+      console.log(
+        '[4KHDHub] Discovery queries=' +
+        queries.length +
+        ' primary="' +
+        String(
+          queries[0] ||
+          ''
+        ) +
+        '"'
+      );
 
       return collectValuesBounded(
         queries.map(function (query) {
@@ -1661,7 +1999,7 @@ function getStreams(
           };
         }),
         4,
-        6500
+        8200
       ).then(function (groups) {
         var resultSeen = {};
         var results = [];
@@ -1692,7 +2030,8 @@ function getStreams(
             tmdb.title,
             tmdb.year,
             type,
-            tmdb.aliases
+            tmdb.aliases,
+            requestedSeason
           );
 
         if (!best) {

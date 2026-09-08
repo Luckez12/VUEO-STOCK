@@ -372,6 +372,62 @@ function bestAliasTitleScore(candidate, info) {
   return best;
 }
 
+
+/* VUEO_DISCOVERY_REBUILD_V1 */
+function cleanDiscoveryTitleMSM(value) {
+  return normalizeTitle(
+    String(value || "")
+      .replace(/\[(?:[^\]]{0,120})\]/g, " ")
+      .replace(/\b(?:19|20)\d{2}\b/g, " ")
+      .replace(/\bs\d{1,2}(?:\s*[-–]\s*s\d{1,2})?\b/gi, " ")
+      .replace(/\b(?:ep|episode|e)\s*[-#:]?\s*\d{1,3}\b/gi, " ")
+      .replace(/\b(?:2160p|1080p|720p|480p|4k|web[- ]?dl|bluray|hevc|h26[45]|10bit|malaysub|malaydub|series|movies?)\b/gi, " ")
+  );
+}
+
+function bestDiscoveryTitleScoreMSM(candidate, info) {
+  var aliases =
+    info &&
+    Array.isArray(info.aliases) &&
+    info.aliases.length
+      ? info.aliases
+      : [
+          info && info.title,
+          info && info.originalTitle
+        ];
+
+  var cleanCandidate =
+    cleanDiscoveryTitleMSM(candidate);
+
+  var best = 0;
+
+  aliases.forEach(function(alias) {
+    var cleanAlias =
+      cleanDiscoveryTitleMSM(alias);
+
+    if (!cleanCandidate || !cleanAlias) return;
+
+    if (cleanCandidate === cleanAlias) {
+      best = Math.max(best, 100);
+    } else if (
+      cleanCandidate.indexOf(cleanAlias) !== -1 ||
+      cleanAlias.indexOf(cleanCandidate) !== -1
+    ) {
+      best = Math.max(best, 90);
+    } else {
+      best = Math.max(
+        best,
+        titleScore(
+          cleanCandidate,
+          cleanAlias
+        )
+      );
+    }
+  });
+
+  return best;
+}
+
 function buildAliasQueries(info, limit) {
   var output = [];
   var seen = {};
@@ -460,62 +516,236 @@ function rewriteToCurrentDomain(url) {
 }
 
 function parseSearchResults(html, pageUrl) {
-  var blocks = extractBalancedBlocksByClass(html, "div", "display-item");
   var results = [];
   var seen = Object.create(null);
+  var rank = 0;
 
-  blocks.forEach(function(block, rank) {
-    var anchorMatch = block.match(/<a\b[^>]*href\s*=\s*(["'])[\s\S]*?\1[^>]*>/i);
+  function addBlock(block) {
+    var source =
+      String(block || "");
+
+    var anchorMatch =
+      source.match(
+        /<a\b[^>]*href\s*=\s*(["'])[\s\S]*?\1[^>]*>/i
+      );
+
     if (!anchorMatch) return;
 
-    var anchor = anchorMatch[0];
-    var href = rewriteToCurrentDomain(safeUrl(getAttr(anchor, "href"), pageUrl));
-    if (!href || seen[href]) return;
+    var anchor =
+      anchorMatch[0];
 
-    var rawTitle = stripTags(getAttr(anchor, "title"));
-    if (!rawTitle) {
-      var h3 = block.match(/<h3\b[^>]*>([\s\S]*?)<\/h3>/i);
-      rawTitle = h3 ? stripTags(h3[1]) : "";
+    var href =
+      rewriteToCurrentDomain(
+        safeUrl(
+          getAttr(anchor, "href"),
+          pageUrl
+        )
+      );
+
+    if (
+      !href ||
+      seen[href]
+    ) {
+      return;
     }
+
+    if (
+      !/\/(?:movies|tvshows)\//i.test(href)
+    ) {
+      return;
+    }
+
+    var rawTitle =
+      stripTags(
+        getAttr(anchor, "oldtitle") ||
+        getAttr(anchor, "title")
+      );
+
+    if (!rawTitle) {
+      var heading =
+        source.match(
+          /<(?:h2|h3)\b[^>]*>([\s\S]*?)<\/(?:h2|h3)>/i
+        );
+
+      rawTitle =
+        heading
+          ? stripTags(heading[1])
+          : "";
+    }
+
+    if (!rawTitle) {
+      var image =
+        source.match(
+          /<img\b[^>]*alt\s*=\s*(["'])([\s\S]*?)\1[^>]*>/i
+        );
+
+      rawTitle =
+        image
+          ? stripTags(image[2])
+          : "";
+    }
+
     if (!rawTitle) return;
 
-    var year = "";
-    var yearMatch = rawTitle.match(/\s*\(((?:19|20)\d{2})\)\s*$/);
-    if (yearMatch) year = yearMatch[1];
+    var year =
+      yearFrom(rawTitle) ||
+      yearFrom(source);
 
-    var title = rawTitle.replace(/\s*\(((?:19|20)\d{2})\)\s*$/, "").trim() || rawTitle;
-    var ptype = String(getAttr(anchor, "data-ptype") || "").toLowerCase();
-    var isSeries = ptype.indexOf("tv") !== -1 || /\/tvshows\//i.test(href);
+    var title =
+      rawTitle
+        .replace(/\s*\(((?:19|20)\d{2})\)\s*$/, "")
+        .trim() ||
+      rawTitle;
+
+    var ptype =
+      String(
+        getAttr(anchor, "data-ptype") ||
+        ""
+      ).toLowerCase();
+
+    var isSeries =
+      ptype.indexOf("tv") !== -1 ||
+      /\/tvshows\//i.test(href) ||
+      /\bmli-eps\b/i.test(source);
 
     seen[href] = true;
+
     results.push({
       title: title,
       year: year,
       href: href,
       isSeries: isSeries,
-      rank: rank
+      rank: rank++
     });
-  });
+  }
+
+  /*
+   * Legacy layout.
+   */
+  extractBalancedBlocksByClass(
+    html,
+    "div",
+    "display-item"
+  ).forEach(addBlock);
+
+  /*
+   * Current movisubmalay/Pencuri style cards.
+   */
+  extractBalancedBlocksByClass(
+    html,
+    "div",
+    "ml-item"
+  ).forEach(addBlock);
+
+  /*
+   * Generic fallback: the current archive pages expose canonical /movies/
+   * and /tvshows/ anchors even if CSS class names change.
+   */
+  var anchorRegex =
+    /<a\b[^>]*href\s*=\s*(["'])[\s\S]*?\1[^>]*>([\s\S]*?)<\/a>/gi;
+
+  var match;
+
+  while (
+    (match = anchorRegex.exec(String(html || "")))
+  ) {
+    var tag =
+      match[0];
+
+    var href =
+      rewriteToCurrentDomain(
+        safeUrl(
+          getAttr(tag, "href"),
+          pageUrl
+        )
+      );
+
+    if (
+      !href ||
+      seen[href] ||
+      !/\/(?:movies|tvshows)\//i.test(href)
+    ) {
+      continue;
+    }
+
+    var title =
+      stripTags(
+        getAttr(tag, "oldtitle") ||
+        getAttr(tag, "title") ||
+        match[2]
+      );
+
+    if (!title) continue;
+
+    seen[href] = true;
+
+    results.push({
+      title: title.replace(/\s*\(((?:19|20)\d{2})\)\s*$/, "").trim(),
+      year: yearFrom(title),
+      href: href,
+      isSeries: /\/tvshows\//i.test(href),
+      rank: rank++
+    });
+  }
 
   return results;
 }
 
 function scoreCandidate(item, info, mediaType) {
   var score =
-    bestAliasTitleScore(
+    bestDiscoveryTitleScoreMSM(
       item.title,
       info
     );
 
-  if (item.year && info.year && item.year === info.year) score += 30;
-  if (mediaType === "tv" && item.isSeries) score += 24;
-  if (mediaType === "movie" && !item.isSeries) score += 18;
-  if (mediaType === "tv" && !item.isSeries) score -= 25;
-  if (mediaType === "movie" && item.isSeries) score -= 25;
-  score += Math.max(0, 12 - Number(item.rank || 0));
+  if (
+    item.year &&
+    info.year &&
+    item.year === info.year
+  ) {
+    score += 18;
+  }
+
+  if (
+    mediaType === "tv" &&
+    item.isSeries
+  ) {
+    score += 24;
+  }
+
+  if (
+    mediaType === "movie" &&
+    !item.isSeries
+  ) {
+    score += 18;
+  }
+
+  if (
+    mediaType === "tv" &&
+    !item.isSeries
+  ) {
+    score -= 40;
+  }
+
+  if (
+    mediaType === "movie" &&
+    item.isSeries
+  ) {
+    score -= 40;
+  }
+
+  score +=
+    Math.max(
+      0,
+      10 -
+      Number(
+        item.rank ||
+        0
+      )
+    );
+
   return score;
 }
-
 
 function slugifyTitle(value) {
   var text = String(value || "");
@@ -630,7 +860,7 @@ function buildDirectCandidates(info, mediaType) {
   var titles =
     buildAliasQueries(
       info,
-      4
+      8
     );
 
   var output = [];
@@ -717,6 +947,43 @@ function searchSite(query) {
     });
 }
 
+
+function browseArchiveMSM(mediaType) {
+  var path =
+    mediaType === "tv"
+      ? "/tvshows/"
+      : "/movies/";
+
+  var url =
+    trimSlash(currentBaseUrl) +
+    path;
+
+  return requestText(
+    url,
+    {
+      "Referer":
+        trimSlash(currentBaseUrl) +
+        "/"
+    },
+    3200
+  )
+    .then(function(result) {
+      updateBaseFromUrl(
+        result.url ||
+        url
+      );
+
+      return parseSearchResults(
+        result.text,
+        result.url ||
+        url
+      );
+    })
+    .catch(function() {
+      return [];
+    });
+}
+
 function findBestTitle(info, mediaType) {
   return tryDirectTitlePage(
     info,
@@ -725,39 +992,126 @@ function findBestTitle(info, mediaType) {
     if (direct) return direct;
 
     console.log(
-      "[MSM21] direct permalink miss, using alias-aware WordPress search"
+      "[MSM21] direct permalink miss, using discovery search"
     );
 
     var queries =
       buildAliasQueries(
         info,
-        4
+        8
       );
 
     return collectValuesBounded(
       queries.map(function(query) {
         return function() {
-          return searchSite(query).catch(function() { return []; });
+          return searchSite(query)
+            .catch(function() {
+              return [];
+            });
         };
       }),
       3,
-      5200
+      7000
     ).then(function(groups) {
-      var seen = Object.create(null);
+      var seen =
+        Object.create(null);
+
       var candidates = [];
 
       groups.forEach(function(items) {
-        (Array.isArray(items) ? items : []).forEach(function(item) {
-          if (!item || !item.href || seen[item.href]) return;
+        (
+          Array.isArray(items)
+            ? items
+            : []
+        ).forEach(function(item) {
+          if (
+            !item ||
+            !item.href ||
+            seen[item.href]
+          ) {
+            return;
+          }
+
           seen[item.href] = true;
           candidates.push(item);
         });
       });
 
-      candidates.sort(function(a, b) {
-        return scoreCandidate(b, info, mediaType) - scoreCandidate(a, info, mediaType);
+      function choose(items) {
+        var list =
+          Array.isArray(items)
+            ? items.slice()
+            : [];
+
+        list.sort(function(a, b) {
+          return (
+            scoreCandidate(
+              b,
+              info,
+              mediaType
+            ) -
+            scoreCandidate(
+              a,
+              info,
+              mediaType
+            )
+          );
+        });
+
+        if (!list.length) {
+          return null;
+        }
+
+        var topScore =
+          scoreCandidate(
+            list[0],
+            info,
+            mediaType
+          );
+
+        return topScore >= 44
+          ? list[0]
+          : null;
+      }
+
+      var best =
+        choose(candidates);
+
+      if (best) {
+        console.log(
+          "[MSM21] discovery search hit " +
+          best.href
+        );
+        return best;
+      }
+
+      /*
+       * Search endpoints on this site have changed markup several times.
+       * The archive page is a reliable fallback and currently exposes the
+       * canonical /tvshows/ and /movies/ cards directly.
+       */
+      return browseArchiveMSM(
+        mediaType
+      ).then(function(archiveItems) {
+        var merged =
+          candidates.concat(
+            Array.isArray(archiveItems)
+              ? archiveItems
+              : []
+          );
+
+        var archiveBest =
+          choose(merged);
+
+        if (archiveBest) {
+          console.log(
+            "[MSM21] archive discovery hit " +
+            archiveBest.href
+          );
+        }
+
+        return archiveBest;
       });
-      return candidates[0] || null;
     });
   }).then(function(best) {
     if (!best) {
@@ -766,22 +1120,10 @@ function findBestTitle(info, mediaType) {
       );
     }
 
-    if (
-      !best.__detailHtml &&
-      scoreCandidate(
-        best,
-        info,
-        mediaType
-      ) < 30
-    ) {
-      throw new Error(
-        "MSM21 match confidence too low"
-      );
-    }
-
     return best;
   });
 }
+
 function parseEpisodeTarget(html, pageUrl, season, episode) {
   var requestedSeason = Number(season || 1);
   var requestedEpisode = Number(episode || 1);

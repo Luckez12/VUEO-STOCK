@@ -91,6 +91,39 @@ for (const scraper of manifest.scrapers) {
     fail(`${scraper.filename} is missing the fast-discovery marker`);
   }
 
+  if (
+    ['moviebox', 'msm21', 'pencurimovie', '4khdhub', 'hdhub4u'].includes(scraper.id) &&
+    !source.includes('VUEO_DISCOVERY_REBUILD_V1')
+  ) {
+    fail(`${scraper.filename} is missing the discovery-rebuild marker`);
+  }
+
+  if (scraper.id === 'hdhub4u') {
+    if (!source.includes('buildDiscoveryQueriesHD')) {
+      fail('HDHub4u must use discovery query variants');
+    }
+    if (!source.includes("add(alias);")) {
+      fail('HDHub4u discovery must search the raw title before season variants');
+    }
+  }
+
+  if (scraper.id === '4khdhub') {
+    if (!source.includes('buildDiscoveryQueries4K')) {
+      fail('4KHDHub must use discovery query variants');
+    }
+    if (!source.includes('parse4KSearchCards')) {
+      fail('4KHDHub must support current and legacy search-card layouts');
+    }
+  }
+
+  if (scraper.id === 'msm21' && !source.includes('browseArchiveMSM')) {
+    fail('MSM21 must retain archive discovery fallback');
+  }
+
+  if (scraper.id === 'pencurimovie' && !source.includes('browsePencuriLanding')) {
+    fail('PencuriMovie must retain landing-page discovery fallback');
+  }
+
   if (scraper.id === 'hdhub4u' && source.includes('bestMatch || searchResults[0]')) {
     fail('HDHub4u must not fall through to an unqualified first search result');
   }
